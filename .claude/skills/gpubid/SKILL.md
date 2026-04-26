@@ -63,6 +63,8 @@ https://colab.research.google.com/github/meghna810/GPUBid/blob/main/notebooks/de
 ```
 Auto-imports any notebook from a public GitHub repo. No upload, no zip. Bookmark this URL.
 
+The notebook's setup cell auto-clones the repo into `/content/GPUBid`, so every run picks up the latest pushed `main`. There's no separate "update" step — re-running the setup cell is the update.
+
 **Path B — Git clone in Colab:**
 ```python
 !git clone -q https://github.com/meghna810/GPUBid.git
@@ -89,6 +91,50 @@ from google.colab import drive
 drive.mount('/content/drive')
 ```
 The setup cell finds `/content/drive/MyDrive/GPUBid`.
+
+## Refresh Colab to the latest GitHub commit
+
+The notebook's setup cell already does `rm -rf /content/GPUBid && git clone …` on every run, so just **re-run the setup cell** when you've pushed new code from your laptop. Old clone is wiped, fresh one comes down (~2-3 seconds).
+
+If you've made *local edits in Colab* you want to keep, comment out the `rm -rf` line in the setup cell first (then `cd /content/GPUBid && git stash` your changes before pulling, etc.). The default behaviour is bias-toward-fresh because that's what teammates demoing the notebook expect.
+
+A faster alternative if you don't want to restart from scratch:
+```python
+!git -C /content/GPUBid pull -q
+```
+Run that in any cell. It keeps the existing clone and just fast-forwards.
+
+## Providing API keys
+
+Three places, in priority order:
+
+### 1. Colab Secrets (recommended for Colab)
+
+Click the **key icon** in the left sidebar of Colab → "Add a new secret". Use **exactly** these names:
+
+| Secret name | Used for |
+|---|---|
+| `ANTHROPIC_API_KEY` | Anthropic / Claude live mode and preset baking |
+| `OPENAI_API_KEY` | OpenAI / GPT live mode and preset baking |
+
+Toggle "Notebook access" on for whichever notebook you're running. The notebook's mode cell calls `google.colab.userdata.get('ANTHROPIC_API_KEY')` (then falls back to `OPENAI_API_KEY`) and pre-fills the Password field. You'll see a `✓ Loaded ... from Colab Secrets.` line print.
+
+These two names are the convention used by the Anthropic and OpenAI Python SDKs themselves, so they Just Work for many third-party tools too.
+
+### 2. Paste into the Password field
+
+If you skipped Colab Secrets, paste the key into the masked field in the mode cell. It stays in the notebook session only — never written to disk.
+
+### 3. Environment variable (local + scripts)
+
+For running scripts on your laptop or in CI:
+```bash
+export ANTHROPIC_API_KEY=sk-ant-…
+export OPENAI_API_KEY=sk-…
+PYTHONPATH=src python -m gpubid.experiments.bake_presets all
+```
+
+The `bake_presets.py` script reads from these env vars directly. The `heterogeneous_mix` preset specifically needs **both** keys set because it intentionally puts buyers on Anthropic and sellers on OpenAI.
 
 ## Provider-agnostic LLM client
 
