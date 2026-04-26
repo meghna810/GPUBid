@@ -216,7 +216,7 @@ def animate_negotiation(
     model: Optional[str] = None,
     seller_api_key: Optional[str] = None,
     preset_path: Optional[str] = None,
-) -> tuple[RoundSnapshot, Market]:
+) -> tuple[RoundSnapshot, Market, list[RoundSnapshot]]:
     """Run a negotiation and animate it in the current notebook cell.
 
     Three modes:
@@ -226,9 +226,9 @@ def animate_negotiation(
                    heterogeneity experiment.
       - "preset" — Replay a baked LLM trace from `preset_path`. No API key required.
 
-    Returns (final_snapshot, market) so downstream cells can compute baselines on
-    exactly the market that was animated (especially in preset mode where the market
-    comes from the preset, not from the caller).
+    Returns (final_snapshot, market, all_snapshots) so downstream cells can compute
+    baselines on the same market AND reconstruct per-deal negotiation threads
+    without re-running an expensive LLM negotiation.
     """
     from IPython.display import HTML, display
     import ipywidgets as widgets
@@ -269,8 +269,10 @@ def animate_negotiation(
     display(out)
 
     final_snapshot: Optional[RoundSnapshot] = None
+    all_snapshots: list[RoundSnapshot] = []
     for snap in snapshot_iterable:
         final_snapshot = snap
+        all_snapshots.append(snap)
         with out:
             out.clear_output(wait=True)
             display(HTML(render_round(snap, market)))
@@ -278,7 +280,7 @@ def animate_negotiation(
             time.sleep(step_seconds)
 
     assert final_snapshot is not None and market is not None
-    return final_snapshot, market
+    return final_snapshot, market, all_snapshots
 
 
 def collect_snapshots(

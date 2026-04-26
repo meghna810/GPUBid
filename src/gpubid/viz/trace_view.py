@@ -12,7 +12,12 @@ summary only.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from gpubid.schema import Buyer, CapacitySlot, Deal, Market, Offer, Seller
+
+if TYPE_CHECKING:
+    from gpubid.engine.board import RoundSnapshot
 from gpubid.viz.market_view import (
     FONT_STACK,
     GPU_COLOR,
@@ -24,11 +29,37 @@ from gpubid.viz.market_view import (
 )
 
 
-def render_trace(deal: Deal, market: Market, all_offers: list[Offer] | None = None) -> str:
-    """Render the inspect view for one deal."""
+def render_trace(
+    deal: Deal,
+    market: Market,
+    snapshots: "list[RoundSnapshot] | None" = None,
+    all_offers: list[Offer] | None = None,
+) -> str:
+    """Render the inspect view for one deal — the *bilateral thread* that led to it.
+
+    Pass `snapshots` (the full list from a run) so the chat-bubble section can
+    reconstruct the implicit negotiation between this buyer and this seller's
+    slot. Without snapshots/offers, the deal/surplus/parties are still shown
+    but the conversation block is empty.
+    """
     buyer = next(b for b in market.buyers if b.id == deal.buyer_id)
     seller = next(s for s in market.sellers if s.id == deal.seller_id)
     slot = next(sl for sl in seller.capacity_slots if sl.id == deal.slot_id)
+
+    # Reconstruct relevant offers from snapshots, if provided.
+    if all_offers is None and snapshots is not None:
+        offers: list[Offer] = []
+        seen_ids: set[str] = set()
+        for snap in snapshots:
+            for action in snap.actions:
+                for offer in action.new_offers:
+                    if offer.id in seen_ids:
+                        continue
+                    # Keep only offers from the buyer or for the seller's slot.
+                    if offer.from_id == deal.buyer_id or offer.slot_id == deal.slot_id:
+                        offers.append(offer)
+                        seen_ids.add(offer.id)
+        all_offers = offers
 
     header = _render_deal_header(deal, buyer, slot)
     surplus = _render_surplus_split(deal, buyer, slot)
