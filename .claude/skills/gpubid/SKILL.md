@@ -238,8 +238,9 @@ After any run (fast / preset / live) the round-by-round actions of every agent a
 - **Offer trajectories** (`render_timeline`) — Plotly chart, one line per agent, showing posted price vs round. Solid line = won a deal, dashed = held out.
 - **Aggression scoreboard** (`render_aggression_scoreboard`) — buyers ranked by `(last_bid − first_bid)/first_bid` (climbing = positive); sellers by `(first_ask − last_ask)/first_ask` (decaying = positive).
 - **Round-by-round log** (`render_log`) — every offer with ↑/↓ arrows showing the change from the previous round.
+- **Chat exchange** (`render_chat_exchange`) — every offer's `reasoning` text rendered as iMessage-style bubbles (buyers right, sellers left), in chronological order. The most interesting view in **live LLM mode** because that's where the agents' actual strategy text lives. Pass `only_with_reasoning=True` to skip deterministic stub messages.
 
-Cell 6.5 in the notebook wires all three.
+Cells 6.5 (timelines + log + aggression) and 6.6 (chat exchange) in the notebook wire these.
 
 The interesting failure mode forensics surface: in tight markets, *winners often have aggression near zero* (they posted once and accepted a good ask) while *losers climbed aggressively but had no compatible slot* — so failure isn't about price strategy, it's about market structure. That's the kind of insight the demo needs to surface for the professor.
 

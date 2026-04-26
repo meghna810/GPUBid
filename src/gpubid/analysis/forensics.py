@@ -356,6 +356,164 @@ def render_aggression_scoreboard(history: NegotiationHistory) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Chat-exchange view — the reasoning bubbles
+# ---------------------------------------------------------------------------
+
+
+def render_chat_exchange(
+    history: NegotiationHistory,
+    only_with_reasoning: bool = False,
+    max_height_px: int = 600,
+) -> str:
+    """Render the negotiation as a chat-app conversation — every offer's reasoning
+    as a bubble, in chronological order.
+
+    Buyers on the right (green-tinted), sellers on the left (blue-tinted), like
+    iMessage. The reasoning text is the headline — that's where LLM strategy lives.
+    Pass `only_with_reasoning=True` to skip deterministic stub reasoning if you
+    only care about the LLM-written messages.
+
+    Scrollable container — long negotiations (many rounds × many agents) stay
+    contained instead of pushing the rest of the notebook off-screen.
+    """
+    bubbles: list[str] = []
+
+    for snap in history.snapshots:
+        # Round divider — like a date stamp in a chat app.
+        bubbles.append(
+            f'<div style="text-align:center;color:#9ca3af;font-size:11px;font-weight:600;'
+            f'text-transform:uppercase;letter-spacing:0.05em;margin:16px 0 8px;">'
+            f'— Round {snap.round_n} —'
+            f'</div>'
+        )
+
+        for action in snap.actions:
+            agent_id = action.agent_id
+            is_buyer = agent_id in history.buyer_timelines
+            label = (history.buyer_timelines[agent_id].label if is_buyer
+                     else next((s.label for s in history.market.sellers if s.id == agent_id), agent_id))
+            role_emoji = "🛒" if is_buyer else "🖥️"
+
+            for offer in action.new_offers:
+                if only_with_reasoning and not (offer.reasoning or "").strip():
+                    continue
+                bubbles.append(
+                    _chat_bubble(
+                        agent_id=agent_id,
+                        agent_label=label,
+                        role_emoji=role_emoji,
+                        side="right" if is_buyer else "left",
+                        action_label=("BID" if is_buyer else "ASK"),
+                        action_color=("#16a34a" if is_buyer else "#0369a1"),
+                        offer_summary=(
+                            f'{offer.gpu_type.value} ×{offer.qty} @ '
+                            f'${offer.price_per_gpu_hr:.2f}/hr · '
+                            f'{offer.duration}h@slot {offer.start:02d}'
+                            + (f' · slot_id={offer.slot_id}' if offer.slot_id else '')
+                        ),
+                        reasoning=offer.reasoning,
+                    )
+                )
+
+            for accept_id in action.accept_offer_ids:
+                bubbles.append(
+                    _chat_bubble(
+                        agent_id=agent_id,
+                        agent_label=label,
+                        role_emoji=role_emoji,
+                        side="right" if is_buyer else "left",
+                        action_label=f"ACCEPTS {accept_id}",
+                        action_color="#d97706",
+                        offer_summary="",
+                        reasoning=action.reasoning,
+                        is_accept=True,
+                    )
+                )
+
+        for d in snap.new_deals:
+            bubbles.append(
+                f'<div style="text-align:center;background:#dcfce7;color:#14532d;'
+                f'padding:6px 12px;border-radius:12px;display:inline-block;margin:6px auto;'
+                f'font-size:11px;font-weight:600;">'
+                f'✓ DEAL · {d.buyer_id} ↔ {d.seller_id} · {d.gpu_type.value}×{d.qty} '
+                f'@ ${d.price_per_gpu_hr:.2f}/hr (total ${d.total_value:.0f})'
+                f'</div>'
+            )
+
+    if not bubbles:
+        bubbles.append(
+            '<div style="color:#9ca3af;font-style:italic;text-align:center;">'
+            'No actions captured. (Older preset files predate the action-capture wiring; '
+            'use a fresh fast/live run instead.)'
+            '</div>'
+        )
+
+    body = "".join(bubbles)
+    return (
+        f'<div style="font-family:{FONT_STACK};max-height:{max_height_px}px;'
+        f'overflow-y:auto;padding:8px 12px;background:#fafafa;border-radius:8px;'
+        f'border:1px solid #e5e7eb;">'
+        f'{body}'
+        f'</div>'
+    )
+
+
+def _chat_bubble(
+    *,
+    agent_id: str,
+    agent_label: str,
+    role_emoji: str,
+    side: str,
+    action_label: str,
+    action_color: str,
+    offer_summary: str,
+    reasoning: str,
+    is_accept: bool = False,
+) -> str:
+    align = "flex-end" if side == "right" else "flex-start"
+    bg = "#dcfce7" if side == "right" else "#dbeafe"   # green = buyer, blue = seller
+    border = "#bbf7d0" if side == "right" else "#bfdbfe"
+
+    reasoning_html = ""
+    if reasoning and reasoning.strip():
+        # Quote it; preserve newlines as <br>.
+        safe = (reasoning.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\n", "<br>"))
+        reasoning_html = (
+            f'<div style="font-size:12px;color:#1f2937;margin-top:6px;line-height:1.4;">'
+            f'{safe}'
+            f'</div>'
+        )
+
+    summary_html = ""
+    if offer_summary:
+        summary_html = (
+            f'<div style="font-family:monospace;font-size:11px;color:#374151;margin-top:4px;">'
+            f'{offer_summary}'
+            f'</div>'
+        )
+
+    accept_marker = ""
+    if is_accept:
+        accept_marker = '<div style="font-size:10px;color:#92400e;font-weight:600;">✓ ACCEPT</div>'
+
+    return (
+        f'<div style="display:flex;justify-content:{align};margin:4px 0;">'
+        f'<div style="max-width:75%;background:{bg};border:1px solid {border};'
+        f'border-radius:10px;padding:8px 12px;">'
+        f'<div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;">'
+        f'<strong style="font-size:11px;color:#111;">{role_emoji} {agent_label}</strong>'
+        f'<span style="font-size:10px;color:{action_color};font-weight:600;">{action_label}</span>'
+        f'</div>'
+        f'<div style="font-family:monospace;font-size:9px;color:#9ca3af;">{agent_id}</div>'
+        f'{summary_html}'
+        f'{accept_marker}'
+        f'{reasoning_html}'
+        f'</div></div>'
+    )
+
+
 __all__ = [
     "AgentTimeline",
     "NegotiationHistory",
@@ -363,4 +521,5 @@ __all__ = [
     "render_timeline",
     "render_log",
     "render_aggression_scoreboard",
+    "render_chat_exchange",
 ]
