@@ -1,0 +1,17 @@
+"""Smoke tests: package imports and version is exposed."""
+
+import gpubid
+
+
+def test_version_exposed():
+    assert gpubid.__version__ == "0.1.0"
+
+
+def test_submodules_import():
+    from gpubid import schema, market, llm  # noqa: F401
+    from gpubid.agents import buyer, seller, deterministic, prompts  # noqa: F401
+    from gpubid.engine import board, round_runner, clearing  # noqa: F401
+    from gpubid.benchmark import vcg, posted_price  # noqa: F401
+    from gpubid.eval import metrics, judge  # noqa: F401
+    from gpubid.viz import market_view, trading_floor, trace_view, charts, figures  # noqa: F401
+    from gpubid.experiments import bake_presets, run_sweep  # noqa: F401

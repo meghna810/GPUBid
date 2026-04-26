@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
+.env
+.DS_Store
+data/runs/*.json
+!data/runs/.gitkeep
+# data/figures/*.png are *kept* in the repo so the notebook's cell 7 renders
+# on first load without needing to run run_sweep.py first.
