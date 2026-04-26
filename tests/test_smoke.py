@@ -4,7 +4,8 @@ import gpubid
 
 
 def test_version_exposed():
-    assert gpubid.__version__ == "0.1.0"
+    # Bump this assertion in lockstep with `src/gpubid/__init__.py` when we cut a new version.
+    assert gpubid.__version__ == "0.2.0"
 
 
 def test_submodules_import():
