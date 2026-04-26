@@ -79,12 +79,30 @@ def serialize_snapshot(snap) -> dict:
         "active_buyer_ids": list(snap.active_buyer_ids),
         "active_seller_ids": list(snap.active_seller_ids),
         "is_final": snap.is_final,
+        "actions": [
+            {
+                "agent_id": a.agent_id,
+                "new_offers": [serialize_offer(o) for o in a.new_offers],
+                "accept_offer_ids": list(a.accept_offer_ids),
+                "reasoning": a.reasoning,
+            }
+            for a in snap.actions
+        ],
     }
 
 
 def deserialize_snapshot(data: dict):
     """Build a RoundSnapshot back from JSON."""
-    from gpubid.engine.board import RoundSnapshot
+    from gpubid.engine.board import AgentActionRecord, RoundSnapshot
+    actions = tuple(
+        AgentActionRecord(
+            agent_id=a["agent_id"],
+            new_offers=tuple(Offer(**o) for o in a.get("new_offers", [])),
+            accept_offer_ids=tuple(a.get("accept_offer_ids", [])),
+            reasoning=a.get("reasoning", ""),
+        )
+        for a in data.get("actions", [])
+    )
     return RoundSnapshot(
         round_n=data["round_n"],
         max_rounds=data["max_rounds"],
@@ -95,6 +113,7 @@ def deserialize_snapshot(data: dict):
         active_buyer_ids=tuple(data["active_buyer_ids"]),
         active_seller_ids=tuple(data["active_seller_ids"]),
         is_final=data["is_final"],
+        actions=actions,
     )
 
 

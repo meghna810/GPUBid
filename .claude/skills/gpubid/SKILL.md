@@ -231,6 +231,45 @@ These aren't in the original proposal but the professor wants honesty about real
 
 **6. Hard reserve guard outside agents.** The clearing engine validates every accept: a buyer cannot pay above their max value; a seller cannot accept below their slot's reserve. If an LLM agent produces a violating accept, we *reject* the deal and log the violation — we don't trust the agent to police itself. The violation rate is a metric we report.
 
+## Forensics — who held out, who conceded
+
+After any run (fast / preset / live) the round-by-round actions of every agent are captured on `RoundSnapshot.actions`. The `gpubid.analysis.forensics` module turns that into:
+
+- **Offer trajectories** (`render_timeline`) — Plotly chart, one line per agent, showing posted price vs round. Solid line = won a deal, dashed = held out.
+- **Aggression scoreboard** (`render_aggression_scoreboard`) — buyers ranked by `(last_bid − first_bid)/first_bid` (climbing = positive); sellers by `(first_ask − last_ask)/first_ask` (decaying = positive).
+- **Round-by-round log** (`render_log`) — every offer with ↑/↓ arrows showing the change from the previous round.
+
+Cell 6.5 in the notebook wires all three.
+
+The interesting failure mode forensics surface: in tight markets, *winners often have aggression near zero* (they posted once and accepted a good ask) while *losers climbed aggressively but had no compatible slot* — so failure isn't about price strategy, it's about market structure. That's the kind of insight the demo needs to surface for the professor.
+
+## Tournament — provider head-to-head
+
+The `gpubid.analysis.tournament` module pits Anthropic vs OpenAI agents on the same markets:
+
+```python
+from gpubid.analysis.tournament import head_to_head_alternating, render_tournament_report
+result = head_to_head_alternating(
+    n_seeds=10,
+    api_keys={'anthropic': '...', 'openai': '...'},
+    n_buyers=8, n_sellers=4, regime='tight', max_rounds=5,
+)
+display(HTML(render_tournament_report(result)))
+```
+
+Round-robin assignment splits buyers (and sellers) half-and-half between providers, so we can directly compare:
+
+- **Win rate** by provider (% of buyers who closed a deal)
+- **Avg deal price** by provider
+- **Avg surplus** captured per buyer / per seller
+- **Avg aggression** by provider (concession rate)
+
+For pipeline testing without API costs, `head_to_head_deterministic` runs the same machinery with deterministic agents tagged with synthetic provider labels.
+
+Cost guidance: 10 seeds × 12 agents × 5 rounds ≈ 600 LLM calls, roughly $1-3 with Haiku 4.5 / GPT-4o-mini.
+
+Notebook cell 6.7 has the full driver, including reading both keys from Colab Secrets.
+
 ## Notebook tour (8 sections, top to bottom)
 
 1. **Setup** — package import; auto-detects local / Colab / Drive layouts.
@@ -262,6 +301,9 @@ These aren't in the original proposal but the professor wants honesty about real
 | Surplus, Gini, recovery, off-peak utilization | `src/gpubid/eval/metrics.py` |
 | HTML rendering for market cards, trading floor, trace | `src/gpubid/viz/market_view.py`, `trading_floor.py`, `trace_view.py` |
 | Plotly + matplotlib figures | `src/gpubid/viz/charts.py`, `figures.py` |
+| Per-round agent action capture | `src/gpubid/engine/board.py` (`AgentActionRecord`, `RoundSnapshot.actions`) |
+| Forensics — timelines, log, aggression | `src/gpubid/analysis/forensics.py` |
+| Provider tournament — head-to-head | `src/gpubid/analysis/tournament.py` |
 | Preset baking (LLM → JSON) | `src/gpubid/experiments/bake_presets.py` |
 | Headline experiments → 4 figures | `src/gpubid/experiments/run_sweep.py` |
 

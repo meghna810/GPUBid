@@ -108,6 +108,16 @@ class RunState:
 
 
 @dataclass(frozen=True)
+class AgentActionRecord:
+    """What one agent did in one round — used for forensics and tournament analysis."""
+
+    agent_id: str
+    new_offers: tuple[Offer, ...] = ()
+    accept_offer_ids: tuple[str, ...] = ()
+    reasoning: str = ""
+
+
+@dataclass(frozen=True)
 class RoundSnapshot:
     """A frozen, yieldable snapshot used by the visualization layer."""
 
@@ -120,6 +130,9 @@ class RoundSnapshot:
     active_buyer_ids: tuple[str, ...]
     active_seller_ids: tuple[str, ...]
     is_final: bool
+    # Forensic record — what each agent *attempted* this round (regardless of whether
+    # the action survived clearing). Empty in older preset files.
+    actions: tuple[AgentActionRecord, ...] = ()
 
 
 def make_offer_id(kind: OfferKind, agent_or_slot_id: str, round_n: int, suffix: str = "") -> str:
@@ -130,4 +143,4 @@ def make_offer_id(kind: OfferKind, agent_or_slot_id: str, round_n: int, suffix: 
     return "-".join(parts)
 
 
-__all__ = ["RunState", "RoundSnapshot", "make_offer_id"]
+__all__ = ["RunState", "RoundSnapshot", "AgentActionRecord", "make_offer_id"]

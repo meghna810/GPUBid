@@ -15,7 +15,7 @@ from gpubid.agents.deterministic import (
     DeterministicBuyer,
     DeterministicSeller,
 )
-from gpubid.engine.board import RoundSnapshot, RunState
+from gpubid.engine.board import AgentActionRecord, RoundSnapshot, RunState
 from gpubid.engine.clearing import (
     buyer_accepts_ask,
     commit_deal,
@@ -71,6 +71,47 @@ def make_llm_agents(
     }
     seller_agents: dict[str, SellerAgent] = {
         s.id: LLMSeller(seller_id=s.id, client=seller_client) for s in market.sellers
+    }
+    return buyer_agents, seller_agents
+
+
+def make_llm_agents_assigned(
+    market: Market,
+    *,
+    api_keys: dict[str, str],
+    buyer_assignment: dict[str, str],
+    seller_assignment: dict[str, str],
+    model: Optional[str] = None,
+) -> tuple[dict[str, BuyerAgent], dict[str, SellerAgent]]:
+    """Build LLM agents with per-agent provider assignment for tournament runs.
+
+    `api_keys` maps provider name ('anthropic' or 'openai') to the corresponding
+    `sk-…` key. `buyer_assignment` maps each buyer_id to a provider name; same
+    for sellers. Used by the tournament module to put Claude buyers vs OpenAI
+    buyers on the same market.
+
+    Reuses one LLMClient per provider (so we don't pay client init cost N times).
+    """
+    from gpubid.agents.buyer import LLMBuyer
+    from gpubid.agents.seller import LLMSeller
+    from gpubid.llm import make_client
+
+    clients: dict[str, "object"] = {}
+    for provider, key in api_keys.items():
+        clients[provider] = make_client(key, model=model)
+
+    def _client_for(provider_name: str):
+        if provider_name not in clients:
+            raise ValueError(f"No API key supplied for provider {provider_name!r}. Got keys for: {list(api_keys)}")
+        return clients[provider_name]
+
+    buyer_agents: dict[str, BuyerAgent] = {
+        b.id: LLMBuyer(buyer_id=b.id, client=_client_for(buyer_assignment[b.id]))
+        for b in market.buyers if b.id in buyer_assignment
+    }
+    seller_agents: dict[str, SellerAgent] = {
+        s.id: LLMSeller(seller_id=s.id, client=_client_for(seller_assignment[s.id]))
+        for s in market.sellers if s.id in seller_assignment
     }
     return buyer_agents, seller_agents
 
@@ -146,6 +187,18 @@ def run_rounds(
             if remaining <= 0:
                 state.seller_asks.pop(slot_id, None)
 
+        # Forensic record of every action taken this round (before/regardless of clearing).
+        action_records = []
+        for agent_id, action in {**seller_actions, **buyer_actions}.items():
+            action_records.append(
+                AgentActionRecord(
+                    agent_id=agent_id,
+                    new_offers=tuple(action.new_offers),
+                    accept_offer_ids=tuple(action.accept_offer_ids),
+                    reasoning=action.reasoning,
+                )
+            )
+
         snapshot = RoundSnapshot(
             round_n=round_n,
             max_rounds=max_rounds,
@@ -156,6 +209,7 @@ def run_rounds(
             active_buyer_ids=tuple(sorted(state.active_buyer_ids)),
             active_seller_ids=tuple(sorted(state.active_seller_ids)),
             is_final=is_final,
+            actions=tuple(action_records),
         )
         yield snapshot
 
