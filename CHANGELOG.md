@@ -1,5 +1,57 @@
 # Changelog
 
+## v0.3.1 — 2026-04-27 (later same day)
+
+The "make negotiations interesting" pass.
+
+### Live mode is now the default; fast mode dropped from the UI
+
+Per spec §0.2.1: the deterministic "fast" option is gone from the notebook's
+mode dropdown. v0.3 is LLM-only end-to-end. The dropdown now offers:
+- **`live`** (default when an API key is loaded) — runs a fresh LLM negotiation now.
+- **`preset`** — replays a baked LLM trace from `data/presets/*.json`. No API cost.
+
+For the 3-4 min video and the live class demo: bake presets once, then use
+`preset` mode. The deterministic agents stay in code (used by the tournament
+smoke harness and by tests via recorded fixtures); they're just not in the
+notebook UX.
+
+### Buyer agents translate CEO/CTO requirements (Phase 3 wired into the notebook)
+
+`gpubid.market_v3.generate_market_v3()` samples a CEO requirement per buyer
+from `REQUIREMENT_LIBRARY` and runs `BuyerAgent.translate()` (cached in-memory
+by `(provider, model, requirement_id, prompt_version)`) when an LLM client is
+provided. Falls back to a synthetic translator when no key is available.
+
+The notebook's market render cell now shows a "💬 From the CEO/CTO" panel
+under each buyer card with the original NL brief plus what the agent
+translated it into.
+
+### Sellers carry volume-discount tiers — offers are non-directly-comparable
+
+35% flat-priced, 65% tiered (1-3 tiers, 5-25% discounts at varying thresholds).
+Tiers feed into the bilateral dialogue prompts (agents can argue about volume
+commits), the tiered VCG benchmark, and the seller card render.
+
+### New cells
+
+- **6.8 Post-deal regret signals (exploratory)** — heuristic-based, no LLM.
+  Per-deal regret table + calibration trigger when avg seller regret > 0.4.
+- **6.9 HITL trigger demo** — stub showing what events would surface in
+  production (ambiguous requirements, low-confidence closes). Uses the
+  headless auto-proceed surfacer.
+
+### Plumbing
+
+- `agent_models_map()` builds the agent_id -> (provider, model) lookup; chat
+  exchange and dialogue views consume it.
+- Bilateral dialogue prompts now receive `seller_volume_policy` and
+  `buyer_business_context`.
+
+161 tests passing, 2 skipped.
+
+---
+
 ## v0.3.0 — 2026-04-27
 
 The first refactor toward two-sided information asymmetry as a first-class

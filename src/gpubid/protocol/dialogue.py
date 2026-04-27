@@ -203,6 +203,8 @@ def run_bilateral_dialogue(
     market: Market | None = None,
     posted_price_estimate: float | None = None,
     friction_cost_estimate: float = 200.0,
+    seller_volume_policy: object | None = None,  # VolumeDiscountPolicy; lazy-typed to avoid circular import
+    buyer_business_context: str | None = None,
 ) -> BilateralDialogueResult:
     """Run a strict alternating 1:1 dialogue between buyer and seller.
 
@@ -226,11 +228,17 @@ def run_bilateral_dialogue(
     )
 
     # Persuasive system prompts pre-rendered with this pair's facts.
-    seller_system = _build_seller_prompt(seller, slot, buyer, market)
+    seller_system = _build_seller_prompt(
+        seller, slot, buyer, market,
+        seller_volume_policy=seller_volume_policy,
+        buyer_business_context=buyer_business_context,
+    )
     buyer_system  = _build_buyer_prompt(
         buyer, seller, slot, market,
         posted_price_estimate=posted_price_estimate or slot.reserve_per_gpu_hr * 1.4,
         friction_cost_estimate=friction_cost_estimate,
+        seller_volume_policy=seller_volume_policy,
+        buyer_business_context=buyer_business_context,
     )
 
     # Each side maintains its own message history.
@@ -335,8 +343,34 @@ def run_bilateral_dialogue(
 # ---------------------------------------------------------------------------
 
 
-def _build_seller_prompt(seller: Seller, slot: CapacitySlot, buyer: Buyer, market: Market | None) -> str:
+def _summarize_volume_policy(policy: object | None) -> str:
+    """Human-readable summary of a VolumeDiscountPolicy for prompts."""
+    if policy is None or not getattr(policy, "tiers", None):
+        return "none advertised (flat list price only)"
+    lines = []
+    for tier in policy.tiers:
+        lines.append(
+            f"  - {tier.min_qty_gpus}+ GPUs for {tier.min_duration_hours}+h: "
+            f"{tier.discount_pct*100:.0f}% off list price"
+        )
+    neg = " (negotiable — you may propose a custom tier)" if getattr(policy, "is_negotiable", False) else ""
+    return "advertised tiers:" + neg + "\n" + "\n".join(lines)
+
+
+def _build_seller_prompt(
+    seller: Seller, slot: CapacitySlot, buyer: Buyer, market: Market | None,
+    *, seller_volume_policy: object | None = None,
+    buyer_business_context: str | None = None,
+) -> str:
     market_ctx = _render_market_context(market, exclude_buyer_id=buyer.id)
+    policy_summary = _summarize_volume_policy(seller_volume_policy)
+    biz_block = ""
+    if buyer_business_context:
+        # Public — the buyer broadcasts their CEO context.
+        biz_block = (
+            f"\nCounterparty's business context (public, from their CEO/CTO brief):\n"
+            f"  \"{buyer_business_context[:280]}\"\n"
+        )
     return _SELLER_DIALOGUE_PROMPT.format(
         seller_label=seller.label, seller_id=seller.id,
         buyer_label=buyer.label, buyer_id=buyer.id,
@@ -350,16 +384,24 @@ def _build_seller_prompt(seller: Seller, slot: CapacitySlot, buyer: Buyer, marke
         buyer_window_start=buyer.job.earliest_start,
         buyer_window_end=buyer.job.latest_finish,
         buyer_urgency=("urgent" if buyer.urgency > 0.66 else "soon" if buyer.urgency > 0.33 else "routine"),
-        market_context=market_ctx,
+        market_context=market_ctx + "\n\nYour publicly advertised volume policy:\n" + policy_summary + biz_block,
     )
 
 
 def _build_buyer_prompt(
     buyer: Buyer, seller: Seller, slot: CapacitySlot, market: Market | None,
     posted_price_estimate: float, friction_cost_estimate: float,
+    *, seller_volume_policy: object | None = None,
+    buyer_business_context: str | None = None,
 ) -> str:
     market_ctx = _render_market_context(market, exclude_buyer_id=buyer.id)
-    volume_discount = "none advertised"  # legacy v0.2 sellers don't carry tiers
+    volume_discount = _summarize_volume_policy(seller_volume_policy)
+    biz_block = ""
+    if buyer_business_context:
+        biz_block = (
+            f"\nYour OWN business context (for grounding — never reveal numeric urgency or budget):\n"
+            f"  \"{buyer_business_context[:280]}\"\n"
+        )
     return _BUYER_DIALOGUE_PROMPT.format(
         buyer_label=buyer.label, buyer_id=buyer.id,
         buyer_workload="training/inference",
@@ -376,9 +418,9 @@ def _build_buyer_prompt(
         slot_id=slot.id, gpu_type=slot.gpu_type.value,
         seller_qty_gpus=slot.qty, seller_duration_hours=slot.duration,
         seller_start_slot=slot.start,
-        list_price=slot.reserve_per_gpu_hr * 1.5,  # synthetic v0.2 list price
+        list_price=slot.reserve_per_gpu_hr * 1.5,
         volume_discount_summary=volume_discount,
-        market_context=market_ctx,
+        market_context=market_ctx + biz_block,
     )
 
 
