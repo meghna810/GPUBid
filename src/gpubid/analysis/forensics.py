@@ -365,6 +365,7 @@ def render_chat_exchange(
     history: NegotiationHistory,
     only_with_reasoning: bool = False,
     max_height_px: int = 600,
+    agent_models: dict[str, tuple[str, str]] | None = None,
 ) -> str:
     """Render the negotiation as a chat-app conversation — every offer's reasoning
     as a bubble, in chronological order.
@@ -395,6 +396,8 @@ def render_chat_exchange(
                      else next((s.label for s in history.market.sellers if s.id == agent_id), agent_id))
             role_emoji = "🛒" if is_buyer else "🖥️"
 
+            model_badge = _build_model_badge(agent_id, agent_models)
+
             for offer in action.new_offers:
                 if only_with_reasoning and not (offer.reasoning or "").strip():
                     continue
@@ -413,6 +416,7 @@ def render_chat_exchange(
                             + (f' · slot_id={offer.slot_id}' if offer.slot_id else '')
                         ),
                         reasoning=offer.reasoning,
+                        model_badge_html=model_badge,
                     )
                 )
 
@@ -428,6 +432,7 @@ def render_chat_exchange(
                         offer_summary="",
                         reasoning=action.reasoning,
                         is_accept=True,
+                        model_badge_html=model_badge,
                     )
                 )
 
@@ -459,6 +464,30 @@ def render_chat_exchange(
     )
 
 
+_PROVIDER_BADGE_COLOR: dict[str, str] = {
+    "anthropic": "#dc7c2f",
+    "openai": "#10a37f",
+    "fixture": "#6b7280",
+}
+
+
+def _build_model_badge(
+    agent_id: str,
+    agent_models: dict[str, tuple[str, str]] | None,
+) -> str:
+    """Inline-styled badge showing 'provider/model' for an agent. Empty if unknown."""
+    if not agent_models or agent_id not in agent_models:
+        return ""
+    provider, model = agent_models[agent_id]
+    bg = _PROVIDER_BADGE_COLOR.get(provider, "#9ca3af")
+    short_model = (model or "?").replace("-latest", "").replace("claude-", "c-").replace("gpt-", "")
+    return (
+        f'<span style="background:{bg};color:#fff;padding:1px 5px;border-radius:6px;'
+        f'font-size:9px;font-weight:600;font-family:monospace;margin-left:4px;">'
+        f'{provider}/{short_model}</span>'
+    )
+
+
 def _chat_bubble(
     *,
     agent_id: str,
@@ -470,6 +499,7 @@ def _chat_bubble(
     offer_summary: str,
     reasoning: str,
     is_accept: bool = False,
+    model_badge_html: str = "",
 ) -> str:
     align = "flex-end" if side == "right" else "flex-start"
     bg = "#dcfce7" if side == "right" else "#dbeafe"   # green = buyer, blue = seller
@@ -503,7 +533,7 @@ def _chat_bubble(
         f'<div style="max-width:75%;background:{bg};border:1px solid {border};'
         f'border-radius:10px;padding:8px 12px;">'
         f'<div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;">'
-        f'<strong style="font-size:11px;color:#111;">{role_emoji} {agent_label}</strong>'
+        f'<strong style="font-size:11px;color:#111;">{role_emoji} {agent_label}{model_badge_html}</strong>'
         f'<span style="font-size:10px;color:{action_color};font-weight:600;">{action_label}</span>'
         f'</div>'
         f'<div style="font-family:monospace;font-size:9px;color:#9ca3af;">{agent_id}</div>'

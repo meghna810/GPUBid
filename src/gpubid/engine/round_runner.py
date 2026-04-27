@@ -75,6 +75,28 @@ def make_llm_agents(
     return buyer_agents, seller_agents
 
 
+def agent_models_map(
+    buyer_agents: dict[str, "BuyerAgent"],
+    seller_agents: dict[str, "SellerAgent"],
+) -> dict[str, tuple[str, str]]:
+    """Build agent_id -> (provider, model) for chat-bubble model badges.
+
+    Works for any agent type that exposes ``client.provider`` and ``client.model``
+    (LLMBuyer / LLMSeller). Deterministic agents fall back to ``("deterministic", "rule-based")``.
+    """
+    out: dict[str, tuple[str, str]] = {}
+    for aid, ag in {**buyer_agents, **seller_agents}.items():
+        client = getattr(ag, "client", None)
+        if client is None:
+            out[aid] = ("deterministic", "rule-based")
+        else:
+            out[aid] = (
+                getattr(client, "provider", "?"),
+                getattr(client, "model", "?"),
+            )
+    return out
+
+
 def make_llm_agents_assigned(
     market: Market,
     *,
@@ -339,5 +361,8 @@ __all__ = [
     "BuyerAgent",
     "SellerAgent",
     "make_deterministic_agents",
+    "make_llm_agents",
+    "make_llm_agents_assigned",
+    "agent_models_map",
     "run_rounds",
 ]
