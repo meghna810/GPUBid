@@ -1,5 +1,79 @@
 # Changelog
 
+## v0.4.5 — 2026-04-27 (latest)
+
+The "demo plan" pass — restructure the notebook for a 4-minute walkthrough.
+
+### Notebook structural changes
+
+- **Framing cell at the top.** Cell 0 is now a 3-bullet thesis block explaining why this is an *agentic* marketplace, not just an auction (volume discounts, NL CEO briefs, conditional concessions). The audience needs the thesis before they see anything else.
+- **Setup folded into `<details>`.** Setup + mode picker + API-key cells are wrapped in a collapsible markdown block so the demo opens on the substantive content, not on import logs.
+- **Demo run parameters cell.** Hard-coded `DEMO_N_BUYERS=8`, `DEMO_N_SELLERS=4`, `DEMO_REGIME='tight'`, `DEMO_SEED=42` so the demo is reproducible. Sliders live further down for exploration.
+- **"Six platform-design choices" cell** between the CEO panel and the bilateral chat. The card-grid that the audience screenshots for the design-tradeoffs slide.
+- **Self-sufficient bilateral chat cell.** Now builds its own market via `generate_market_v3` if no earlier cell already populated `market` and `enrichment`. Lets the demo skip directly from "CEO requirements" to "watch the chat" without running the slider/market cells in between.
+
+### Intra-provider model-version tournament
+
+`head_to_head_multi` now accepts `intra_provider_mode=True`. With this flag, `provider_models[provider]` is a list of model IDs (e.g. `['claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-7']`) and the round-robin runs across those *models* within one provider, instead of across providers.
+
+New notebook cell **6.77 Model-version tournament** uses this to compare Haiku vs Sonnet vs Opus (or 4o-mini vs 4o, or Flash vs Pro) — the Project Vend-style "smarter models negotiate harder" comparison.
+
+`render_tournament_report` now accepts a `title=` kwarg to override the default heading (used by both tournament cells).
+
+### Stale-text + dead-code cleanup
+
+- Cell 16 (Tradeoff sandbox): removed "All in fast mode so it's instantaneous"; replaced with v0.3 wording.
+- Cell 18 (Inspect a deal): removed "In fast mode it's deterministic stub text".
+- Cell 22 (Chat exchange): removed "In fast mode the deterministic agents just stamp...".
+- Cell 23 (Chat exchange code): removed deterministic branch; now requires an LLM key.
+- Cell 27 (Provider tournament code): `MODE = "deterministic"` default removed (was contradicting "v0.3 is LLM-only"). Constants block promoted to top of cell.
+- Cell 27 imports cleaned up (no `head_to_head_deterministic` reference).
+- Cell 6.65 (Bilateral dialogue code): removed deterministic branch.
+- Cell 36 (Writeup): rewritten to lead with the bilateral-chat mechanism instead of the v0.2 "structured tuples + free-form reasoning" framing.
+
+### Bumped
+
+- `__version__` → `0.4.5`.
+- 165 tests passing, 2 skipped.
+
+---
+
+## v0.4.4 — 2026-04-27 (latest)
+
+The "Gemini sellers stop walking away on turn 1" fix.
+
+### Schema sanitizer now handles JSONSchema type unions
+
+The dialogue tool's `proposed_price_per_gpu_hr` parameter has type
+`["number", "null"]` (price required for `counter`, null for `accept` /
+`walk_away`). Gemini's tool schema validator rejects union types — `type`
+must be a single string. The sanitizer in `gpubid.llm._sanitize_for_gemini`
+didn't handle this, so every Gemini-backed seller agent crashed on turn 1
+with a Pydantic validation error and walked away as the fallback action.
+
+Fix: when `type` is a list, drop "null" from it, set the surviving type
+as the canonical one, and add `nullable: true` (Gemini's preferred way
+to express optional). Applied recursively through nested schemas.
+
+Two new regression tests in `test_llm.py` so this can't sneak back:
+- `test_gemini_sanitizer_rewrites_type_union_to_nullable`
+- `test_dialogue_tool_schema_is_gemini_compatible`
+
+### Stricter "no early walk-away" instructions
+
+Even agents that aren't crashing were sometimes walking away on turn 1.
+Both dialogue prompts now say explicitly: NEVER walk away on turns 1-3
+(seller) or turns 1, 2, 4 (buyer's early turns). The agent must counter.
+Walk-away is only available after turn 4-5 and only after at least 2
+concessions from your own side.
+
+### Bumped
+
+- `__version__` → `0.4.4`.
+- 165 tests passing, 2 skipped (added 2 new schema-sanitizer tests).
+
+---
+
 ## v0.4.3 — 2026-04-27 (latest)
 
 The "deals actually close" fix.

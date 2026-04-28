@@ -322,6 +322,14 @@ def _sanitize_for_gemini(schema: dict[str, Any]) -> dict[str, Any]:
     Gemini rejects `additionalProperties`, `$schema`, `exclusiveMinimum` (in
     some forms), and a few others. Strip them rather than wrestling with the
     SDK's strict validator. Mutates a copy, not the input.
+
+    Critically, Gemini also rejects JSONSchema's `type: ["number", "null"]`
+    union syntax — `type` must be a single string. We translate that pattern
+    to Gemini's preferred shape: drop "null" from the list, set the surviving
+    type as a single string, and add `nullable: true`. (This was the cause of
+    the seller-side Gemini agents failing on turn 1 in dialogue mode — the
+    `proposed_price_per_gpu_hr` parameter has type `["number", "null"]` so
+    a counter can carry a price and an accept/walk doesn't have to.)
     """
     if not isinstance(schema, dict):
         return schema
@@ -329,6 +337,23 @@ def _sanitize_for_gemini(schema: dict[str, Any]) -> dict[str, Any]:
     drop = {"additionalProperties", "$schema", "$id", "$ref"}
     for k, v in schema.items():
         if k in drop:
+            continue
+        if k == "type" and isinstance(v, list):
+            non_null = [t for t in v if t != "null"]
+            had_null = "null" in v
+            if len(non_null) == 1:
+                out["type"] = non_null[0]
+                if had_null:
+                    out["nullable"] = True
+            elif len(non_null) > 1:
+                # Gemini doesn't support true unions — pick the first non-null
+                # type as the canonical one and mark nullable if "null" was in the list.
+                out["type"] = non_null[0]
+                if had_null:
+                    out["nullable"] = True
+            else:
+                # All-null type list (degenerate); skip the `type` field entirely.
+                pass
             continue
         if k == "properties" and isinstance(v, dict):
             out[k] = {prop_name: _sanitize_for_gemini(prop_schema)

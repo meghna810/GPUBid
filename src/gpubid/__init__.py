@@ -1,3 +1,3 @@
 """GPUBid — agentic GPU auction with structured offer scaffolding."""
 
-__version__ = "0.4.3"  # guaranteed buyer-seller satisfiability + close-biased prompts so deals strike
+__version__ = "0.4.5"  # demo plan: framing cell, design choices, intra-provider model tournament, stale-text fixes

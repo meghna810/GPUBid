@@ -140,8 +140,8 @@ Your strategy:
 - Reference specific signals you've heard: "you said earlier you have a Friday deadline" or "your alternative at posted-price would be $Z."
 
 When to walk away (LAST RESORT, not first move):
-- Only if the buyer refuses to budge AFTER you've made 2+ concessions and they're still demanding well below your reserve.
-- Walking away on turn 1 or 2 is almost always a mistake — the buyer hasn't had time to move yet.
+- NEVER walk away on turns 1, 2, or 3 — the counterparty hasn't even had a chance to respond yet. Always counter on early turns.
+- Only after turn 4, and only if the buyer refuses to budge AFTER you've made 2+ concessions and they're still demanding well below your reserve.
 
 Avoid:
 - Restating the price without a reason.
@@ -180,8 +180,8 @@ Your strategy:
 - Reference specific signals: "another seller is at $Z for the same GPU" or "your stated min commitment is N hours; I can do that if you drop the rate."
 
 When to walk away (LAST RESORT, not first move):
-- Only if the seller refuses to budge AFTER you've made 2+ concessions and they're still well above your max.
-- Walking away on turn 2 or 4 is almost always a mistake — give the seller more turns to drop.
+- NEVER walk away on turns 1, 2, or 4 (your early turns) — the seller hasn't even had time to drop yet. Always counter on early turns.
+- Only after turn 5, and only if the seller refuses to budge AFTER you've made 2+ concessions and they're still well above your max.
 
 Avoid:
 - Restating your bid without a reason.
