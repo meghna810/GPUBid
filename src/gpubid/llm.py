@@ -23,7 +23,7 @@ from typing import Any, Optional, Protocol
 
 
 def detect_provider(api_key: str) -> str:
-    """Return 'anthropic' or 'openai' based on the key prefix.
+    """Return 'anthropic', 'openai', or 'gemini' based on the key prefix.
 
     Raises ProviderUnknownError on unrecognized keys.
     """
@@ -34,9 +34,12 @@ def detect_provider(api_key: str) -> str:
         return "anthropic"
     if key.startswith("sk-"):
         return "openai"
+    # Google AI Studio keys begin with "AIza" (40 chars total).
+    if key.startswith("AIza"):
+        return "gemini"
     raise ProviderUnknownError(
-        f"Unrecognized key format. Expected 'sk-ant-...' (Anthropic) "
-        f"or 'sk-...' (OpenAI), got prefix {key[:8]!r}."
+        f"Unrecognized key format. Expected 'sk-ant-...' (Anthropic), "
+        f"'sk-...' (OpenAI), or 'AIza...' (Gemini), got prefix {key[:8]!r}."
     )
 
 
@@ -87,6 +90,7 @@ class LLMClient(Protocol):
 
 DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +214,137 @@ class OpenAIClient:
 
 
 # ---------------------------------------------------------------------------
+# Gemini adapter
+# ---------------------------------------------------------------------------
+
+
+class GeminiClient:
+    """Gemini adapter using the google-genai SDK (the 2024+ Google AI SDK).
+
+    Tool-call protocol uses Gemini's `function_declarations` + `function_call`
+    response shape, which we translate to the same internal `ToolCall`. The
+    response part with a `function_call` (if any) wins; otherwise falls back
+    to text and emits the sentinel `__no_tool__` tool name (matching how the
+    Anthropic / OpenAI adapters behave when the model fails to emit a tool).
+    """
+
+    provider = "gemini"
+
+    def __init__(self, api_key: str, model: str = DEFAULT_GEMINI_MODEL):
+        try:
+            from google import genai
+            from google.genai import types as genai_types
+        except ImportError as e:
+            raise RuntimeError(
+                "google-genai package not installed. `pip install google-genai`."
+            ) from e
+        self._genai = genai
+        self._types = genai_types
+        self.client = genai.Client(api_key=api_key)
+        self.model = model
+
+    def generate(
+        self,
+        *,
+        system_prompt: str,
+        messages: list[dict[str, str]],
+        tools: list[ToolSpec],
+        max_tokens: int = 1024,
+        temperature: float = 0.5,
+    ) -> ToolCall:
+        types = self._types
+
+        # Translate ToolSpec → google.genai function_declarations. Gemini's
+        # JSONSchema dialect doesn't accept `additionalProperties` and a few
+        # other JSONSchema-Draft-7 fields; strip them from each parameter
+        # subtree before sending.
+        function_declarations = [
+            {
+                "name": t.name,
+                "description": t.description,
+                "parameters": _sanitize_for_gemini(t.parameters),
+            }
+            for t in tools
+        ]
+        gemini_tools = [types.Tool(function_declarations=function_declarations)]
+
+        # Translate `messages` (OpenAI-style list of role/content) into Gemini
+        # `contents`. Gemini uses 'user' and 'model' as roles (no 'assistant').
+        contents = []
+        for m in messages:
+            role = m.get("role", "user")
+            text = m.get("content", "") or ""
+            gemini_role = "model" if role == "assistant" else "user"
+            contents.append(types.Content(
+                role=gemini_role,
+                parts=[types.Part.from_text(text=text)],
+            ))
+
+        config = types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            tools=gemini_tools,
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            tool_config=types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(mode="ANY"),
+            ),
+        )
+
+        resp = self.client.models.generate_content(
+            model=self.model,
+            contents=contents,
+            config=config,
+        )
+
+        text_chunks: list[str] = []
+        for cand in (resp.candidates or []):
+            content = getattr(cand, "content", None)
+            if content is None:
+                continue
+            for part in (content.parts or []):
+                fc = getattr(part, "function_call", None)
+                if fc is not None and getattr(fc, "name", None):
+                    args = dict(fc.args) if getattr(fc, "args", None) else {}
+                    return ToolCall(
+                        tool_name=fc.name,
+                        arguments=args,
+                        raw_text="".join(text_chunks),
+                    )
+                text = getattr(part, "text", None)
+                if text:
+                    text_chunks.append(text)
+        return ToolCall(tool_name="__no_tool__", arguments={}, raw_text="".join(text_chunks))
+
+
+def _sanitize_for_gemini(schema: dict[str, Any]) -> dict[str, Any]:
+    """Strip JSONSchema fields Gemini doesn't accept, recursively.
+
+    Gemini rejects `additionalProperties`, `$schema`, `exclusiveMinimum` (in
+    some forms), and a few others. Strip them rather than wrestling with the
+    SDK's strict validator. Mutates a copy, not the input.
+    """
+    if not isinstance(schema, dict):
+        return schema
+    out: dict[str, Any] = {}
+    drop = {"additionalProperties", "$schema", "$id", "$ref"}
+    for k, v in schema.items():
+        if k in drop:
+            continue
+        if k == "properties" and isinstance(v, dict):
+            out[k] = {prop_name: _sanitize_for_gemini(prop_schema)
+                      for prop_name, prop_schema in v.items()}
+        elif k == "items" and isinstance(v, dict):
+            out[k] = _sanitize_for_gemini(v)
+        elif isinstance(v, dict):
+            out[k] = _sanitize_for_gemini(v)
+        elif isinstance(v, list):
+            out[k] = [_sanitize_for_gemini(x) if isinstance(x, dict) else x for x in v]
+        else:
+            out[k] = v
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
@@ -219,19 +354,21 @@ def make_client(api_key: str, model: Optional[str] = None) -> LLMClient:
 
     `model` overrides the default for whichever provider was detected. If unset,
     each provider uses the cost-effective default (Haiku for Anthropic,
-    `gpt-4o-mini` for OpenAI).
+    `gpt-4o-mini` for OpenAI, `gemini-2.5-flash` for Gemini).
     """
     provider = detect_provider(api_key)
     if provider == "anthropic":
         return AnthropicClient(api_key=api_key, model=model or DEFAULT_ANTHROPIC_MODEL)
     if provider == "openai":
         return OpenAIClient(api_key=api_key, model=model or DEFAULT_OPENAI_MODEL)
+    if provider == "gemini":
+        return GeminiClient(api_key=api_key, model=model or DEFAULT_GEMINI_MODEL)
     raise ProviderUnknownError(provider)
 
 
 def get_api_key_from_env() -> Optional[str]:
-    """Convenience for notebooks: read either ANTHROPIC_API_KEY or OPENAI_API_KEY."""
-    for env in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+    """Convenience for notebooks: read ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY."""
+    for env in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
         v = os.environ.get(env)
         if v:
             return v
@@ -244,10 +381,12 @@ __all__ = [
     "LLMClient",
     "AnthropicClient",
     "OpenAIClient",
+    "GeminiClient",
     "ProviderUnknownError",
     "detect_provider",
     "make_client",
     "get_api_key_from_env",
     "DEFAULT_ANTHROPIC_MODEL",
     "DEFAULT_OPENAI_MODEL",
+    "DEFAULT_GEMINI_MODEL",
 ]

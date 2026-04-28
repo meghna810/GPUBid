@@ -41,6 +41,7 @@ from gpubid.engine.round_runner import (
     make_llm_agents_assigned,
     run_rounds,
 )
+from gpubid.llm import make_client
 from gpubid.market import generate_market
 from gpubid.schema import Market
 from gpubid.viz.market_view import FONT_STACK
@@ -69,6 +70,7 @@ class TournamentResult:
     name: str
     description: str
     seeds: list[SeedResult] = field(default_factory=list)
+    provider_models: dict[str, str] = field(default_factory=dict)
 
     def per_provider_buyer_stats(self) -> dict[str, dict]:
         """For each provider on the buyer side: total buyers, # who won, avg deal price, avg aggression."""
@@ -177,6 +179,9 @@ def head_to_head_alternating(
 ) -> TournamentResult:
     """Alternating-providers tournament: half the buyers Claude, half OpenAI; same for sellers.
 
+    Backward-compatible 2-provider entry point. For an N-provider tournament
+    (e.g. Anthropic vs OpenAI vs Gemini), use `head_to_head_multi`.
+
     Returns a TournamentResult covering all seeds. Each seed uses a different
     synthetic market so we're averaging over market conditions, not just one shape.
     """
@@ -203,6 +208,113 @@ def head_to_head_alternating(
             seller_assignment=seller_assignment,
             model=model,
         )
+        snaps = list(run_rounds(market, buyers, sellers, max_rounds=max_rounds))
+        history = extract_history(market, snaps)
+
+        result.seeds.append(SeedResult(
+            seed=seed,
+            market=market,
+            history=history,
+            buyer_assignment=buyer_assignment,
+            seller_assignment=seller_assignment,
+        ))
+
+        if progress:
+            n_deals = len(snaps[-1].all_deals)
+            print(f"          → {n_deals} deals struck", flush=True)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# N-provider tournament (e.g. Anthropic vs OpenAI vs Gemini)
+# ---------------------------------------------------------------------------
+
+
+def head_to_head_multi(
+    n_seeds: int,
+    api_keys: dict[str, str],
+    *,
+    n_buyers: int = 8,
+    n_sellers: int = 4,
+    regime: str = "tight",
+    max_rounds: int = 5,
+    provider_models: Optional[dict[str, str]] = None,
+    progress: bool = True,
+) -> TournamentResult:
+    """Round-robin tournament across N providers (>=2).
+
+    `api_keys` can include any subset of {'anthropic', 'openai', 'gemini'}.
+    Buyers and sellers are split round-robin across all provided providers.
+    Use `provider_models` to pin a specific model per provider, e.g.
+    `{'anthropic': 'claude-haiku-4-5-20251001', 'openai': 'gpt-4o-mini',
+      'gemini': 'gemini-2.5-flash'}`. Defaults pick the cheapest tier each
+    provider offers.
+
+    Cost note: 3 providers × 5 seeds × 12 agents × 5 rounds ≈ 900 LLM calls.
+    Roughly $1-3 with the default cost-effective models.
+    """
+    providers = sorted(api_keys.keys())
+    if len(providers) < 2:
+        raise ValueError(
+            f"head_to_head_multi needs at least 2 providers; got {providers}"
+        )
+
+    # Pre-build the LLMClient per provider once per tournament so we don't pay
+    # client init cost on every seed.
+    pinned_models: dict[str, str] = {}
+    if provider_models:
+        for prov, m in provider_models.items():
+            if m:
+                pinned_models[prov] = m
+
+    # Sanity-construct each client once so a bad key fails fast.
+    for prov in providers:
+        try:
+            make_client(api_keys[prov], model=pinned_models.get(prov))
+        except Exception as e:
+            raise ValueError(
+                f"Could not construct {prov} client (bad key or SDK missing): {e}"
+            )
+
+    result = TournamentResult(
+        name="multi-" + "-".join(providers),
+        description=(
+            f"{n_seeds} seeds × {n_buyers}b×{n_sellers}s {regime}; "
+            f"round-robin across {', '.join(providers)}"
+        ),
+        provider_models=pinned_models or {p: "<default>" for p in providers},
+    )
+
+    for i, seed in enumerate(range(n_seeds)):
+        market = generate_market(n_buyers, n_sellers, regime, seed=seed)  # type: ignore[arg-type]
+        buyer_assignment = alternating_assignment(
+            [b.id for b in market.buyers], providers
+        )
+        seller_assignment = alternating_assignment(
+            [s.id for s in market.sellers], providers
+        )
+
+        if progress:
+            print(f"[{i+1}/{n_seeds}] seed={seed} running…", flush=True)
+
+        # Per-provider client pool, with model overrides preserved.
+        from gpubid.agents.buyer import LLMBuyer
+        from gpubid.agents.seller import LLMSeller
+
+        clients = {
+            p: make_client(api_keys[p], model=pinned_models.get(p))
+            for p in providers
+        }
+        buyers = {
+            b.id: LLMBuyer(buyer_id=b.id, client=clients[buyer_assignment[b.id]])
+            for b in market.buyers if b.id in buyer_assignment
+        }
+        sellers = {
+            s.id: LLMSeller(seller_id=s.id, client=clients[seller_assignment[s.id]])
+            for s in market.sellers if s.id in seller_assignment
+        }
+
         snaps = list(run_rounds(market, buyers, sellers, max_rounds=max_rounds))
         history = extract_history(market, snaps)
 
@@ -379,13 +491,126 @@ def render_tournament_chart(result: TournamentResult) -> "go.Figure":
     return fig
 
 
+# ---------------------------------------------------------------------------
+# Baseline comparison — agentic vs VCG vs posted-price across a tournament
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class BaselineComparisonRow:
+    """Per-seed baseline numbers for the tournament summary."""
+
+    seed: int
+    agentic_welfare: float
+    vcg_welfare: float
+    posted_welfare: float
+    agentic_deals: int
+    vcg_deals: int
+    posted_deals: int
+
+    @property
+    def recovery_pct(self) -> float:
+        return (self.agentic_welfare / self.vcg_welfare * 100) if self.vcg_welfare else 0.0
+
+    @property
+    def vs_posted_pct(self) -> float:
+        return (
+            self.agentic_welfare / self.posted_welfare * 100
+            if self.posted_welfare else 0.0
+        )
+
+
+def compute_baseline_comparison(result: TournamentResult) -> list[BaselineComparisonRow]:
+    """For every seed in the tournament, compute VCG + posted-price welfare.
+
+    Used to surface 'tournament agents recovered X% of optimal vs Y% for
+    posted-price' alongside the per-provider win-rate numbers.
+    """
+    from gpubid.benchmark.posted_price import solve_posted_price
+    from gpubid.benchmark.vcg import compute_welfare, solve_vcg
+
+    rows: list[BaselineComparisonRow] = []
+    for seed_result in result.seeds:
+        deals = list(seed_result.history.snapshots[-1].all_deals) if seed_result.history.snapshots else []
+        agentic_w = compute_welfare(seed_result.market, deals)
+        vcg_r = solve_vcg(seed_result.market)
+        posted_r = solve_posted_price(seed_result.market)
+        rows.append(BaselineComparisonRow(
+            seed=seed_result.seed,
+            agentic_welfare=agentic_w,
+            vcg_welfare=vcg_r.welfare,
+            posted_welfare=compute_welfare(seed_result.market, posted_r.deals),
+            agentic_deals=len(deals),
+            vcg_deals=len(vcg_r.deals),
+            posted_deals=len(posted_r.deals),
+        ))
+    return rows
+
+
+def render_baseline_comparison(rows: list[BaselineComparisonRow]) -> str:
+    """HTML table: per-seed welfare across agentic / VCG / posted, plus aggregate."""
+    if not rows:
+        return '<em style="color:#9ca3af;">No seeds.</em>'
+
+    body_rows = []
+    for r in rows:
+        body_rows.append(
+            f'<tr>'
+            f'<td style="padding:6px 10px;font-family:monospace;color:#6b7280;">{r.seed}</td>'
+            f'<td style="padding:6px 10px;font-family:monospace;text-align:right;">${r.agentic_welfare:.0f}</td>'
+            f'<td style="padding:6px 10px;font-family:monospace;text-align:right;">${r.vcg_welfare:.0f}</td>'
+            f'<td style="padding:6px 10px;font-family:monospace;text-align:right;">${r.posted_welfare:.0f}</td>'
+            f'<td style="padding:6px 10px;font-family:monospace;text-align:right;color:'
+            f'{"#16a34a" if r.recovery_pct >= 80 else "#d97706" if r.recovery_pct >= 50 else "#dc2626"};">'
+            f'{r.recovery_pct:.0f}%</td>'
+            f'<td style="padding:6px 10px;font-family:monospace;text-align:right;color:'
+            f'{"#16a34a" if r.vs_posted_pct >= 100 else "#dc2626"};">{r.vs_posted_pct:.0f}%</td>'
+            f'<td style="padding:6px 10px;font-family:monospace;text-align:right;color:#6b7280;">'
+            f'{r.agentic_deals}/{r.vcg_deals}</td>'
+            f'</tr>'
+        )
+
+    avg_recov = sum(r.recovery_pct for r in rows) / len(rows)
+    avg_vsposted = sum(r.vs_posted_pct for r in rows) / len(rows)
+
+    return (
+        f'<div style="font-family:{FONT_STACK};margin-top:10px;">'
+        f'<div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:6px;">'
+        f'Baseline comparison — agentic vs VCG vs posted-price (per seed)'
+        f'</div>'
+        f'<table style="border-collapse:collapse;width:100%;max-width:880px;font-size:12px;">'
+        f'<thead><tr style="background:#f3f4f6;color:#374151;text-align:right;font-size:11px;">'
+        f'<th style="padding:6px 10px;text-align:left;">seed</th>'
+        f'<th style="padding:6px 10px;">agentic ($)</th>'
+        f'<th style="padding:6px 10px;">VCG ($)</th>'
+        f'<th style="padding:6px 10px;">posted ($)</th>'
+        f'<th style="padding:6px 10px;">% of VCG</th>'
+        f'<th style="padding:6px 10px;">vs posted</th>'
+        f'<th style="padding:6px 10px;">deals (agentic/VCG)</th>'
+        f'</tr></thead>'
+        f'<tbody>{"".join(body_rows)}</tbody>'
+        f'</table>'
+        f'<div style="margin-top:8px;padding:8px 12px;background:#f9fafb;border-left:3px solid #2563eb;'
+        f'border-radius:4px;font-size:12px;color:#374151;">'
+        f'Across {len(rows)} seeds: <strong>agentic recovered {avg_recov:.0f}% of VCG welfare</strong>, '
+        f'<strong>{avg_vsposted:.0f}% of posted-price welfare</strong> '
+        f'(>100% = agentic strictly better than posted).'
+        f'</div>'
+        f'</div>'
+    )
+
+
 __all__ = [
     "SeedResult",
     "TournamentResult",
+    "BaselineComparisonRow",
     "alternating_assignment",
     "uniform_assignment",
     "head_to_head_alternating",
+    "head_to_head_multi",
     "head_to_head_deterministic",
     "render_tournament_report",
     "render_tournament_chart",
+    "compute_baseline_comparison",
+    "render_baseline_comparison",
 ]

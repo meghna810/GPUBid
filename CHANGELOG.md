@@ -1,5 +1,105 @@
 # Changelog
 
+## v0.4.0 — 2026-04-27 (evening)
+
+The "deals reliably close + Gemini + persuasion analytics" pass.
+
+### Reliable deal closure
+
+The synthetic market generator was producing too many structurally-infeasible
+buyer/slot pairs (buyer needs 7h or 8 GPUs but no slot has either). Result:
+runs frequently closed zero deals, which made the demo look broken.
+
+- `market_v3._synth_profile_from_requirement` now caps buyer qty at 5 and
+  duration at 6h, matching the tight-regime seller-slot ceiling.
+- Buyer max-WTP markup raised from 1.4-1.8x to 1.7-2.4x of the most expensive
+  acceptable GPU's reserve. The seller's opening ask (1.5x in tight) now
+  always sits inside the buyer's bargaining zone.
+- Buyer interruption tolerance biased toward INTERRUPTIBLE (50%) /
+  CHECKPOINT (35%) / NONE (15%) — keeps tolerance mismatch from blocking
+  otherwise compatible deals.
+
+Across 5 tight-regime seeds the v3 deterministic path now closes 2-4 deals
+per run; slack regime closes 4-7. Previously many seeds closed zero.
+
+### Gemini provider support
+
+`gpubid.llm` now auto-detects Gemini keys (`AIza…`) and dispatches to a new
+`GeminiClient` adapter using the `google-genai` SDK. Default model
+`gemini-2.5-flash`. Schema sanitization strips JSONSchema fields Gemini
+rejects (`additionalProperties`, `$schema`, etc.). The factory and
+`get_api_key_from_env` recognize `GEMINI_API_KEY` / `GOOGLE_API_KEY`.
+
+The notebook's API-key cell loads `GEMINI_API_KEY` from Colab Secrets the
+same way as Anthropic / OpenAI keys. Provider-mix tournaments can now run
+across all three.
+
+### Multi-provider tournament
+
+`gpubid.analysis.tournament.head_to_head_multi` accepts any subset of
+`{anthropic, openai, gemini}` (>=2) and runs round-robin assignment across
+them. Per-provider model pinning is optional (`provider_models=`); defaults
+pick the cheapest tier each provider offers.
+
+`compute_baseline_comparison` + `render_baseline_comparison` add per-seed
+agentic-vs-VCG-vs-posted-price welfare numbers right under the tournament
+report — answers the "did the agentic mechanism actually do better than a
+posted price?" question for every seed in the run.
+
+### Persuasion + manipulation analytics (new module)
+
+`gpubid.analysis.persuasion` adds:
+
+- **Quantitative persuasion** (no LLM needed): for each agent, the average %
+  the counterparty's posted price moved *after* this agent posted. Buyers
+  pulling sellers DOWN score positive; sellers pulling buyers UP score
+  positive. Uses the existing per-round price snapshots — zero extra cost.
+- **Semantic style tags**: optional LLM judge tags each reasoning bubble as
+  one of `bluff`, `false_urgency`, `emotional_appeal`, `anchor`, `concession`,
+  `honest_argument`, `hedge`. Aggregates per-agent and per-provider so we can
+  surface "Claude bluffs more than Gemini" or "OpenAI sellers anchor more
+  aggressively". Costs roughly $0.05-0.10 per market run with cost-effective
+  models; capped at 80 bubbles per run by default.
+- HTML rendering: per-agent leaderboard, per-provider rollup, tag-mix
+  Plotly chart, and an examples panel showing 1-2 utterances per tag.
+
+New notebook cell **6.75 Persuasion + manipulation analytics** runs after
+the tournament cell and uses the same negotiation history.
+
+### HITL real-world use cases (new module)
+
+`gpubid.analysis.hitl_usecases` documents seven scenarios where human review
+demonstrably pays off in an agentic GPU marketplace:
+
+1. Multi-week reservations >$50k commitment (financial)
+2. Regulated workloads — HIPAA / FedRAMP / GDPR (regulatory)
+3. Foundation-model training runs that can't restart (operational)
+4. Counterparty showing manipulation signals (reputational)
+5. Ambiguous CEO requirements — wide qty/duration band (operational)
+6. Repeat low-confidence accepts (financial)
+7. Cross-organization deals — different cost centers (financial)
+
+Each card lists a practical threshold and the auto-detectable signal that
+should escalate. `detect_alerts_from_persuasion` ties this into the
+persuasion analytics — agents whose counterparty was tagged with >=2
+manipulation tags get flagged for review.
+
+New notebook cell **6.95 Where HITL pays off — real-world use cases** runs
+after the existing 6.9 stub and surfaces both the static guidance and any
+live alerts produced from this run.
+
+### Plumbing
+
+- `pyproject.toml`: added `google-genai>=0.3` dependency.
+- Setup cell pip-install line includes `google-genai`.
+- `__version__` → `0.4.0`.
+- Tournament gains `provider_models` field on `TournamentResult` so the
+  baseline rendering can show which model was on each side.
+
+163 tests passing, 2 skipped (existing live-LLM tests).
+
+---
+
 ## v0.3.1 — 2026-04-27 (later same day)
 
 The "make negotiations interesting" pass.

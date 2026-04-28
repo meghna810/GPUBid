@@ -204,11 +204,27 @@ def _generate_buyers(
         latest_offset = int(rng.integers(4, 12))
         latest = min(24, earliest + duration + latest_offset)
 
-        interruption = ALL_INTERRUPTION[int(rng.integers(0, len(ALL_INTERRUPTION)))]
+        # Bias toward more-permissive tolerances so buyer/seller offers are
+        # likely to be tolerance-compatible. Pure NONE buyers reject any offer
+        # that's CHECKPOINT or INTERRUPTIBLE — when LLM sellers post varied
+        # tolerances we lose deals to this even though price would clear. By
+        # weighting toward INTERRUPTIBLE/CHECKPOINT we keep the demo lively.
+        # 50% INTERRUPTIBLE, 35% CHECKPOINT, 15% NONE.
+        tol_choice = float(rng.random())
+        if tol_choice < 0.50:
+            interruption = InterruptionTolerance.INTERRUPTIBLE
+        elif tol_choice < 0.85:
+            interruption = InterruptionTolerance.CHECKPOINT
+        else:
+            interruption = InterruptionTolerance.NONE
 
         # Value: markup over the most expensive acceptable GPU's reserve.
+        # Markup must clearly exceed the seller's opening markup (1.5x in
+        # tight, 1.2x in slack) plus a margin so negotiation has a positive
+        # bargaining zone after both sides hedge. 1.7x..2.4x guarantees the
+        # buyer can in principle afford the seller's opening ask.
         most_expensive = max(GPU_BASE_RESERVE[g] for g in acceptable)
-        markup = 1.3 + 0.5 * float(rng.random())  # 1.3x..1.8x
+        markup = 1.70 + 0.70 * float(rng.random())  # 1.7x..2.4x
         value = round(most_expensive * markup, 2)
 
         urgency = urgency_floor + (1.0 - urgency_floor) * float(rng.random())
