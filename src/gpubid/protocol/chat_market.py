@@ -77,25 +77,24 @@ class ChatMarketRun:
 
 
 def _compatible_slots_for_buyer(buyer: Buyer, sellers: list[Seller]) -> list[CapacitySlot]:
-    """Return seller slots structurally compatible with this buyer's job, cheapest first."""
+    """Return seller slots a buyer might plausibly negotiate with, cheapest first.
+
+    Permissive on purpose: in a chat-based market, the *agents* negotiate
+    the details (slot timing, exact qty, tolerance). Matchmaking only filters
+    things that no amount of conversation can resolve:
+      - the slot has to advertise the right GPU family
+      - the slot has to have *some* GPU capacity left
+
+    Everything else (time-window alignment, exact qty, tolerance) is fair
+    game for the dialogue — sellers can offer to shift a start hour, buyers
+    can accept partial fulfillment. That's the soul of negotiation.
+    """
     matches: list[CapacitySlot] = []
     for s in sellers:
         for sl in s.capacity_slots:
             if sl.gpu_type not in buyer.job.acceptable_gpus:
                 continue
-            if sl.qty < buyer.job.qty:
-                continue
-            if sl.duration < buyer.job.duration:
-                continue
-            # The slot's start window must be able to accommodate the buyer's
-            # required duration inside their [earliest, latest] window.
-            if sl.start < buyer.job.earliest_start:
-                continue
-            if sl.start + buyer.job.duration > buyer.job.latest_finish:
-                continue
-            # Tolerance — sellers in chat mode default to NONE (strictest); the
-            # buyer must accept that. (Same convention as the deterministic flow.)
-            if not buyer_accepts_tolerance(buyer, InterruptionTolerance.NONE):
+            if sl.qty <= 0:
                 continue
             matches.append(sl)
     matches.sort(key=lambda sl: sl.reserve_per_gpu_hr)
@@ -120,8 +119,8 @@ def run_chat_market(
     *,
     buyer_clients: dict[str, LLMClient],
     seller_clients: dict[str, LLMClient],
-    max_turns_per_dialogue: int = 6,
-    max_retries_per_buyer: int = 2,
+    max_turns_per_dialogue: int = 8,
+    max_retries_per_buyer: int = 3,
     posted_price_estimate_factor: float = 1.4,
     seller_volume_policies: Optional[dict[str, object]] = None,
     buyer_business_contexts: Optional[dict[str, str]] = None,
@@ -175,10 +174,13 @@ def run_chat_market(
             if seller is None or seller.id not in seller_clients:
                 continue
 
-            # Opening positions: seller starts at reserve × markup, buyer at max × markdown.
-            # These are the *opening* moves — the LLMs will counter from here.
-            opening_seller = round(slot.reserve_per_gpu_hr * 1.5, 2)
-            opening_buyer = round(buyer.job.max_value_per_gpu_hr * 0.55, 2)
+            # Opening positions: seller starts at reserve × markup, buyer at
+            # max × markdown. We pick relatively MODERATE openings so the gap
+            # is workable in 6-10 turns. Aggressive opens (1.5x reserve and
+            # 0.4x max) leave a gap LLMs frequently fail to close before
+            # walking away — closer openings means more deals close.
+            opening_seller = round(slot.reserve_per_gpu_hr * 1.30, 2)
+            opening_buyer = round(buyer.job.max_value_per_gpu_hr * 0.65, 2)
 
             policy = (seller_volume_policies or {}).get(seller.id)
             biz_ctx = (buyer_business_contexts or {}).get(buyer.id)

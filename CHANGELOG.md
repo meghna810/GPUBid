@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.4.2 — 2026-04-27 (latest)
+
+The "deals actually close" pass on the chat market.
+
+### Permissive matchmaking
+
+`_compatible_slots_for_buyer` previously required exact structural match on
+GPU type, qty, duration, time window, and tolerance — eliminating ~7 of 8
+buyers before any chat happened. Now it filters only on:
+1. GPU family the buyer accepts.
+2. Slot has remaining capacity.
+
+Time window, exact qty, and tolerance are left to the dialogue itself —
+those are negotiable details, not structural blockers. Result: 8/8 buyers
+have 5-9 candidate slots in typical seeds (was often 1).
+
+### Prompts biased toward closing
+
+Both `_SELLER_DIALOGUE_PROMPT` and `_BUYER_DIALOGUE_PROMPT` now lead with
+"YOUR PRIMARY GOAL: CLOSE A DEAL" and explicitly frame walk-away as a last
+resort, not a first move. Concession steps capped at 5-15% per turn so
+agents converge instead of holding firm.
+
+The per-turn user message now includes "closing pressure" in the last 2
+turns: ⚠ banner urging accept when the counterparty's price is workable.
+
+### Tighter opening positions + longer dialogues
+
+Opening prices: seller `1.30 × reserve` (was 1.50), buyer `0.65 × max` (was
+0.55) — narrower starting gap means LLMs converge in the available turns.
+Default `max_turns_per_dialogue` raised from 6 → 8; `max_retries_per_buyer`
+from 2 → 3.
+
+### Bumped
+
+- `__version__` → `0.4.2`
+- 163 tests passing, 2 skipped
+
+---
+
 ## v0.4.1 — 2026-04-27 (late)
 
 The "agents actually negotiate" pass.

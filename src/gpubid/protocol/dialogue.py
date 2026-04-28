@@ -130,11 +130,18 @@ Your inventory:
 - Slot {slot_id}: {gpu_type} × {qty_gpus} GPUs, {duration_hours}h starting at hour {start_slot}.
 - Your PRIVATE reserve: ${reserve_per_gpu_hr:.2f}/GPU-hr. NEVER accept below this. NEVER reveal it.
 
+YOUR PRIMARY GOAL: CLOSE A DEAL. An empty slot earns you $0. A deal at $0.10/hr above reserve still earns you something — every dollar above your reserve is pure margin you wouldn't have made by walking away. You should be willing to settle at any price between your reserve and the buyer's apparent ceiling. Be persistent — most disagreements are negotiable.
+
 Your strategy:
+- OPEN at a meaningful markup over reserve to leave room to negotiate down.
 - ARGUE for your price with concrete reasons: capacity scarcity, the buyer's stated deadline pressure, slot quality (e.g., "this is the only H100 in your time window"), or YOUR alternatives ("I have another buyer interested at $X").
-- When you concede, attach a CONDITION: "I'll go to $X if you commit to N hours" or "I can do $Y if you take the off-peak slot."
+- CONCEDE in moderate steps each turn — typically 5-15% per round. Attach a CONDITION when you concede: "I'll go to $X if you commit to N hours" or "I can do $Y if you take the off-peak slot."
+- When the buyer's offer is at or above your reserve, STRONGLY consider accepting — every closed deal beats no deal.
 - Reference specific signals you've heard: "you said earlier you have a Friday deadline" or "your alternative at posted-price would be $Z."
-- Walk away if the buyer keeps demanding sub-reserve prices. A walk-away is itself a negotiating move — the buyer may come back.
+
+When to walk away (LAST RESORT, not first move):
+- Only if the buyer refuses to budge AFTER you've made 2+ concessions and they're still demanding well below your reserve.
+- Walking away on turn 1 or 2 is almost always a mistake — the buyer hasn't had time to move yet.
 
 Avoid:
 - Restating the price without a reason.
@@ -163,11 +170,18 @@ Your job:
 - Your PRIVATE max willingness-to-pay: ${max_wtp:.2f}/GPU-hr. NEVER pay above this. NEVER reveal it.
 - Your fallback if this fails: posted-price at roughly ${posted_price:.2f}/GPU-hr (with friction cost ~${friction_cost:.0f}).
 
+YOUR PRIMARY GOAL: CLOSE A DEAL. Walking away with no GPU costs you the friction of going to posted-price (often more expensive than negotiating here). Any price *below* your max willingness-to-pay is a positive-value deal — you should be willing to settle anywhere in that band, ideally lower. Be persistent — most price gaps shrink with 4-6 turns of arguing.
+
 Your strategy:
+- OPEN low to leave room to climb.
 - ARGUE down their price with concrete reasons: posted-price comparison, other sellers' offers in the market, your time-window flexibility (or lack of it).
-- When you raise your bid, attach a CONDITION: "I'll go to $X if you guarantee no interruption" or "I'll pay $Y if you bundle the second slot at the same rate."
+- CLIMB in moderate steps each turn — typically 5-15% per round. Attach a CONDITION when you concede: "I'll go to $X if you guarantee no interruption" or "I'll pay $Y if you bundle the second slot at the same rate."
+- When the seller's offer is at or below your max value, STRONGLY consider accepting — every closed deal beats falling back to posted-price.
 - Reference specific signals: "another seller is at $Z for the same GPU" or "your stated min commitment is N hours; I can do that if you drop the rate."
-- Walk away if the seller stays well above your max — your fallback is real.
+
+When to walk away (LAST RESORT, not first move):
+- Only if the seller refuses to budge AFTER you've made 2+ concessions and they're still well above your max.
+- Walking away on turn 2 or 4 is almost always a mistake — give the seller more turns to drop.
 
 Avoid:
 - Restating your bid without a reason.
@@ -259,6 +273,7 @@ def run_bilateral_dialogue(
             counterparty_last_price=last_other_price,
             counterparty_last_argument=last_other_argument,
             is_seller_turn=is_seller_turn,
+            max_turns=max_turns,
         )
         history.append({"role": "user", "content": user_msg})
 
@@ -453,6 +468,7 @@ def _render_user_message(
     opening_seller_price: float, opening_buyer_price: float,
     counterparty_last_price: float, counterparty_last_argument: str,
     is_seller_turn: bool,
+    max_turns: int = 8,
 ) -> str:
     if turn_n == 1:
         return (
@@ -467,18 +483,34 @@ def _render_user_message(
             f"Turn 2 — your reply.\n\n"
             f"The seller opened at ${counterparty_last_price:.2f}/GPU-hr. "
             f"They said: \"{counterparty_last_argument}\"\n\n"
-            f"Argue down. Reference your fallback or other sellers' prices. "
+            f"Argue down with a counter (5-15% above your last move toward them). "
+            f"Reference your fallback or other sellers' prices. "
             f"Use the negotiate_turn tool."
         )
+
     side = "seller" if is_seller_turn else "buyer"
     other = "buyer" if is_seller_turn else "seller"
+    turns_left = max_turns - turn_n + 1
+
+    # Closing pressure — last 2 turns push hard toward convergence.
+    if turns_left <= 2:
+        return (
+            f"Turn {turn_n} of {max_turns} — only {turns_left} turn(s) left.\n\n"
+            f"The {other}'s most recent counter: ${counterparty_last_price:.2f}/GPU-hr.\n"
+            f"They argued: \"{counterparty_last_argument}\"\n\n"
+            f"⚠ This is near the end of the negotiation. If their price is anywhere "
+            f"near acceptable for you (above reserve as a seller, below max as a "
+            f"buyer), STRONGLY consider accept. A closed deal at a workable price "
+            f"beats walking away with nothing. Use the negotiate_turn tool."
+        )
     return (
-        f"Turn {turn_n}.\n\n"
+        f"Turn {turn_n} of {max_turns}.\n\n"
         f"The {other}'s most recent counter: ${counterparty_last_price:.2f}/GPU-hr.\n"
         f"They argued: \"{counterparty_last_argument}\"\n\n"
         f"Respond. Either counter (with a NEW price + condition + argument), "
-        f"accept their last offer, or walk away. As the {side}, your strategic "
-        f"position is: don't restate, ARGUE."
+        f"accept their last offer, or walk away (last resort). As the {side}, "
+        f"your strategic position is: don't restate, ARGUE — and CONCEDE in "
+        f"moderate steps so you converge toward a deal."
     )
 
 
