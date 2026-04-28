@@ -239,21 +239,112 @@ def head_to_head_multi(
     n_sellers: int = 4,
     regime: str = "tight",
     max_rounds: int = 5,
-    provider_models: Optional[dict[str, str]] = None,
+    provider_models: Optional[dict] = None,
+    intra_provider_mode: bool = False,
     progress: bool = True,
 ) -> TournamentResult:
-    """Round-robin tournament across N providers (>=2).
+    """Round-robin tournament — across providers OR (with `intra_provider_mode`)
+    across model versions within ONE provider.
 
-    `api_keys` can include any subset of {'anthropic', 'openai', 'gemini'}.
-    Buyers and sellers are split round-robin across all provided providers.
-    Use `provider_models` to pin a specific model per provider, e.g.
-    `{'anthropic': 'claude-haiku-4-5-20251001', 'openai': 'gpt-4o-mini',
-      'gemini': 'gemini-2.5-flash'}`. Defaults pick the cheapest tier each
-    provider offers.
+    Two modes:
 
-    Cost note: 3 providers × 5 seeds × 12 agents × 5 rounds ≈ 900 LLM calls.
-    Roughly $1-3 with the default cost-effective models.
+    1. **Cross-provider (default).** `api_keys` includes any subset of
+       {'anthropic', 'openai', 'gemini'} (>=2 entries). Buyers and sellers
+       are round-robined across the providers. `provider_models` is an
+       optional `{provider: model_string}` map for per-provider model pinning.
+
+    2. **Intra-provider** (`intra_provider_mode=True`). `api_keys` has ONE
+       provider entry. `provider_models[provider]` is a list of model strings
+       to round-robin across. Use this to compare e.g.
+       Haiku vs Sonnet vs Opus within Anthropic, or 4o-mini vs 4o within
+       OpenAI. Buyers and sellers are split across the model list, and
+       per-agent (provider, model) shows up in the persuasion analytics so
+       you can see "Opus buyers extracted N% more surplus than Haiku buyers".
+
+    Cost note: 3 entrants × 5 seeds × 12 agents × 5 rounds ≈ 900 LLM calls.
+    Roughly $1-3 with cost-effective default models, more with frontier
+    models.
     """
+    if intra_provider_mode:
+        if len(api_keys) != 1:
+            raise ValueError(
+                f"intra_provider_mode needs exactly 1 provider key; got {sorted(api_keys.keys())}"
+            )
+        provider = next(iter(api_keys))
+        if not provider_models or provider not in provider_models:
+            raise ValueError(
+                "intra_provider_mode needs provider_models={provider: [model_a, model_b, ...]}"
+            )
+        models = provider_models[provider]
+        if not isinstance(models, (list, tuple)) or len(models) < 2:
+            raise ValueError(
+                f"intra_provider_mode needs >=2 models; got {models!r}"
+            )
+
+        # Sanity-construct each (provider, model) so bad combos fail fast.
+        for m in models:
+            try:
+                make_client(api_keys[provider], model=m)
+            except Exception as e:
+                raise ValueError(
+                    f"Could not construct {provider}/{m} client: {e}"
+                )
+
+        # Each "entrant" in the round-robin is a (provider, model) tuple,
+        # rendered as "anthropic/claude-haiku-4-5" in the report.
+        entrant_labels = [f"{provider}/{m}" for m in models]
+
+        result = TournamentResult(
+            name=f"intra-{provider}",
+            description=(
+                f"{n_seeds} seeds × {n_buyers}b×{n_sellers}s {regime}; "
+                f"round-robin within {provider}: {', '.join(models)}"
+            ),
+            provider_models={lbl: m for lbl, m in zip(entrant_labels, models)},
+        )
+
+        for i, seed in enumerate(range(n_seeds)):
+            market = generate_market(n_buyers, n_sellers, regime, seed=seed)
+            buyer_assignment = alternating_assignment(
+                [b.id for b in market.buyers], entrant_labels
+            )
+            seller_assignment = alternating_assignment(
+                [s.id for s in market.sellers], entrant_labels
+            )
+
+            if progress:
+                print(f"[{i+1}/{n_seeds}] seed={seed} running…", flush=True)
+
+            from gpubid.agents.buyer import LLMBuyer
+            from gpubid.agents.seller import LLMSeller
+
+            # One client per (provider, model) entrant.
+            clients = {
+                lbl: make_client(api_keys[provider], model=m)
+                for lbl, m in zip(entrant_labels, models)
+            }
+            buyers = {
+                b.id: LLMBuyer(buyer_id=b.id, client=clients[buyer_assignment[b.id]])
+                for b in market.buyers if b.id in buyer_assignment
+            }
+            sellers = {
+                s.id: LLMSeller(seller_id=s.id, client=clients[seller_assignment[s.id]])
+                for s in market.sellers if s.id in seller_assignment
+            }
+
+            snaps = list(run_rounds(market, buyers, sellers, max_rounds=max_rounds))
+            history = extract_history(market, snaps)
+
+            result.seeds.append(SeedResult(
+                seed=seed, market=market, history=history,
+                buyer_assignment=buyer_assignment,
+                seller_assignment=seller_assignment,
+            ))
+            if progress:
+                print(f"          → {len(snaps[-1].all_deals)} deals struck", flush=True)
+        return result
+
+    # ---- Cross-provider mode (default) ----
     providers = sorted(api_keys.keys())
     if len(providers) < 2:
         raise ValueError(
@@ -265,7 +356,9 @@ def head_to_head_multi(
     pinned_models: dict[str, str] = {}
     if provider_models:
         for prov, m in provider_models.items():
-            if m:
+            # Defensively reject lists in cross-provider mode; only intra
+            # mode accepts lists per provider.
+            if isinstance(m, str) and m:
                 pinned_models[prov] = m
 
     # Sanity-construct each client once so a bad key fails fast.
@@ -382,8 +475,12 @@ def head_to_head_deterministic(
 # ---------------------------------------------------------------------------
 
 
-def render_tournament_report(result: TournamentResult) -> str:
-    """HTML summary table — the headline output for the notebook."""
+def render_tournament_report(result: TournamentResult, *, title: Optional[str] = None) -> str:
+    """HTML summary table — the headline output for the notebook.
+
+    `title` overrides the default `result.name` heading (useful for the
+    intra-provider variant: "Within Anthropic: model-version tournament").
+    """
     buyer_stats = result.per_provider_buyer_stats()
     seller_stats = result.per_provider_seller_stats()
 
@@ -436,7 +533,7 @@ def render_tournament_report(result: TournamentResult) -> str:
 
     return (
         f'<div style="font-family:{FONT_STACK};">'
-        f'<h3 style="margin:0 0 6px;">{result.name} — {len(result.seeds)} seeds</h3>'
+        f'<h3 style="margin:0 0 6px;">{title or result.name} — {len(result.seeds)} seeds</h3>'
         f'<div style="font-size:12px;color:#6b7280;margin-bottom:8px;">{result.description}</div>'
         f'{_table(buyer_rows, header_buyer, "Per-provider buyer outcomes (across all buyers in all seeds)")}'
         f'{_table(seller_rows, header_seller, "Per-provider seller outcomes (across all slots in all seeds)")}'
