@@ -247,10 +247,15 @@ def _synth_profile_from_requirement(
     what the LLM would land on for an obvious requirement; not a substitute for
     real translate but lets the demo run without keys.
     """
+    # Cap qty + duration to what the synthetic seller slot generator actually
+    # produces — otherwise most buyer/slot pairs are structurally infeasible
+    # and the demo never closes a deal.
+    # Seller slots in tight regime: qty 2..5, duration 3..6; slack: qty 3..8,
+    # duration 4..8. Use the tight-regime caps as the safe upper bound.
     qty = int(rng.integers(requirement.expected_qty_range[0], requirement.expected_qty_range[1] + 1))
-    qty = max(1, min(qty, 8))  # cap so synthetic markets stay solvable
+    qty = max(1, min(qty, 5))
     duration = float(rng.uniform(*requirement.expected_duration_range))
-    duration = max(2.0, min(duration, 7.0))  # likewise
+    duration = max(2.0, min(duration, 6.0))
 
     # GPU preferences: derive from workload category
     gpu_prefs_by_category: dict[str, tuple[GPUType, ...]] = {
@@ -268,8 +273,11 @@ def _synth_profile_from_requirement(
     earliest = int(rng.integers(0, 12))
     latest = min(24, earliest + int(round(duration)) + int(rng.integers(4, 10)))
 
+    # Most workloads in the demo prefer permissive tolerance so they don't
+    # bounce off seller offers on a tolerance-mismatch alone. Real-time
+    # inference still demands `none` because that's the realistic ask.
     interruption_map = {
-        "training":           "none",
+        "training":           "checkpoint_60min",
         "fine_tuning":        "checkpoint_60min",
         "inference_realtime": "none",
         "inference_batch":    "any",
@@ -278,9 +286,12 @@ def _synth_profile_from_requirement(
     urgency_to_score = {"routine": 0.2, "soon": 0.5, "urgent": 0.85}
     urgency_score = urgency_to_score[requirement.expected_urgency_band] + 0.1 * float(rng.random())
 
-    # Max WTP scales with the most expensive acceptable GPU
+    # Max WTP scales with the most expensive acceptable GPU. Pick a markup
+    # band that clearly exceeds the seller opening markup (1.5x in tight,
+    # 1.2x in slack) so the bargaining zone is positive — otherwise even a
+    # well-behaved LLM run can fail to close any deals.
     most_expensive_reserve = max(GPU_BASE_RESERVE[g] for g in acceptable)
-    markup = 1.4 + 0.4 * float(rng.random())
+    markup = 1.75 + 0.65 * float(rng.random())  # 1.75x..2.4x
     max_wtp = round(most_expensive_reserve * markup, 2)
 
     public = BuyerPublicProfile(

@@ -14,8 +14,10 @@ from gpubid.agents.prompts import (
 )
 from gpubid.llm import (
     DEFAULT_ANTHROPIC_MODEL,
+    DEFAULT_GEMINI_MODEL,
     DEFAULT_OPENAI_MODEL,
     AnthropicClient,
+    GeminiClient,
     OpenAIClient,
     ProviderUnknownError,
     detect_provider,
@@ -42,6 +44,10 @@ def test_anthropic_takes_priority_over_short_sk_prefix():
     assert detect_provider("sk-ant-anything") == "anthropic"
 
 
+def test_gemini_key_detected():
+    assert detect_provider("AIzaSyA1B2C3D4E5F6G7H8") == "gemini"
+
+
 def test_unknown_key_raises():
     with pytest.raises(ProviderUnknownError):
         detect_provider("garbage-key")
@@ -63,6 +69,20 @@ def test_make_client_returns_openai_on_sk_key():
     assert client.provider == "openai"
     assert isinstance(client, OpenAIClient)
     assert client.model == DEFAULT_OPENAI_MODEL
+
+
+def test_make_client_returns_gemini_on_aiza_key():
+    """make_client constructs the Gemini backend without making any API call."""
+    try:
+        client = make_client("AIzaSyTEST_FAKE_KEY_FOR_TESTING_ONLY_xxxx")
+    except RuntimeError as e:
+        # If google-genai isn't installed in the test env, the constructor
+        # raises; that's still acceptable detection behavior, just skip.
+        import pytest
+        pytest.skip(f"google-genai not installed: {e}")
+    assert client.provider == "gemini"
+    assert isinstance(client, GeminiClient)
+    assert client.model == DEFAULT_GEMINI_MODEL
 
 
 def test_make_client_respects_model_override():
