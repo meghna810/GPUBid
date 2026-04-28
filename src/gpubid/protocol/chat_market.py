@@ -120,8 +120,8 @@ def run_chat_market(
     *,
     buyer_clients: dict[str, LLMClient],
     seller_clients: dict[str, LLMClient],
-    max_turns_per_dialogue: int = 6,
-    max_retries_per_buyer: int = 2,
+    max_turns_per_dialogue: int = 8,
+    max_retries_per_buyer: int = 3,
     posted_price_estimate_factor: float = 1.4,
     seller_volume_policies: Optional[dict[str, object]] = None,
     buyer_business_contexts: Optional[dict[str, str]] = None,
@@ -175,10 +175,12 @@ def run_chat_market(
             if seller is None or seller.id not in seller_clients:
                 continue
 
-            # Opening positions: seller starts at reserve × markup, buyer at max × markdown.
-            # These are the *opening* moves — the LLMs will counter from here.
-            opening_seller = round(slot.reserve_per_gpu_hr * 1.5, 2)
-            opening_buyer = round(buyer.job.max_value_per_gpu_hr * 0.55, 2)
+            # Opening positions: seller starts at reserve × markup, buyer at
+            # max × markdown. We pick MODERATE openings so the gap is
+            # workable in 6-10 turns. Aggressive opens leave gaps that LLMs
+            # frequently fail to close before walking away.
+            opening_seller = round(slot.reserve_per_gpu_hr * 1.30, 2)
+            opening_buyer = round(buyer.job.max_value_per_gpu_hr * 0.65, 2)
 
             policy = (seller_volume_policies or {}).get(seller.id)
             biz_ctx = (buyer_business_contexts or {}).get(buyer.id)

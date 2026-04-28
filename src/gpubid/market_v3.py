@@ -386,6 +386,14 @@ def generate_market_v3(
         buyer_public[buyer_v02.id] = pub
         buyer_private[buyer_v02.id] = priv
 
+    # Guarantee structural satisfiability: walk every buyer and, if no seller
+    # slot satisfies them today, relax the buyer's job constraints (lower qty,
+    # shorter duration, wider time window) until at least one slot does.
+    # Without this guarantee the chat market frequently has 0 deals close
+    # because most chats are between structurally-incompatible pairs no
+    # amount of negotiation can fix.
+    buyers_v02 = _ensure_buyer_satisfiability(buyers_v02, sellers_v02)
+
     market = Market(
         id=f"mkt-v3-{regime}-s{seed}-{n_buyers}x{n_sellers}",
         regime=regime,
@@ -401,6 +409,118 @@ def generate_market_v3(
         seller_v3=seller_v3,
     )
     return market, enrichment
+
+
+# ---------------------------------------------------------------------------
+# Satisfiability guarantee
+# ---------------------------------------------------------------------------
+
+
+def _ensure_buyer_satisfiability(
+    buyers: list[Buyer],
+    sellers: list[Seller],
+) -> list[Buyer]:
+    """Return a new buyer list where every buyer has at least one seller slot
+    that fully satisfies them on GPU type, qty, duration, and time window.
+
+    For each buyer, we first try the strict structural compatibility check.
+    If nothing matches, we walk every slot in the market and pick the
+    "closest" one — same GPU family, then shrink the buyer's qty/duration
+    and widen their time window so the slot fits. The buyer's preferences
+    are loosened, never the seller's slot — the seller's reserve and the
+    buyer's max-WTP stay intact, so the only thing the LLM dialogue still
+    has to negotiate is PRICE.
+    """
+    fixed: list[Buyer] = []
+    for buyer in buyers:
+        if _has_compatible_slot(buyer, sellers):
+            fixed.append(buyer)
+            continue
+
+        # Find the slot we can most cheaply make compatible — prefer slots
+        # in the buyer's acceptable_gpus, then any GPU.
+        candidate = _pick_best_repair_target(buyer, sellers)
+        if candidate is None:
+            # Fallback: leave the buyer unchanged (no sellers exist at all).
+            fixed.append(buyer)
+            continue
+
+        seller_slot = candidate
+        new_qty = min(buyer.job.qty, seller_slot.qty)
+        new_duration = min(buyer.job.duration, seller_slot.duration)
+        # Open the time window wide enough that the slot fits inside it.
+        new_earliest = min(buyer.job.earliest_start, seller_slot.start)
+        new_latest = max(
+            buyer.job.latest_finish,
+            seller_slot.start + new_duration,
+        )
+        new_latest = min(24, max(new_latest, new_earliest + new_duration))
+
+        # GPU prefs: ensure the slot's GPU is in the acceptable list.
+        accept = list(buyer.job.acceptable_gpus)
+        if seller_slot.gpu_type not in accept:
+            accept = [seller_slot.gpu_type] + accept
+
+        new_job = Job(
+            qty=new_qty,
+            acceptable_gpus=tuple(accept),
+            earliest_start=new_earliest,
+            latest_finish=new_latest,
+            duration=new_duration,
+            interruption_tolerance=buyer.job.interruption_tolerance,
+            max_value_per_gpu_hr=buyer.job.max_value_per_gpu_hr,  # untouched
+        )
+        fixed.append(Buyer(
+            id=buyer.id,
+            label=buyer.label,
+            job=new_job,
+            urgency=buyer.urgency,
+        ))
+    return fixed
+
+
+def _has_compatible_slot(buyer: Buyer, sellers: list[Seller]) -> bool:
+    for s in sellers:
+        for sl in s.capacity_slots:
+            if sl.gpu_type not in buyer.job.acceptable_gpus:
+                continue
+            if sl.qty < buyer.job.qty:
+                continue
+            if sl.duration < buyer.job.duration:
+                continue
+            if sl.start < buyer.job.earliest_start:
+                continue
+            if sl.start + buyer.job.duration > buyer.job.latest_finish:
+                continue
+            return True
+    return False
+
+
+def _pick_best_repair_target(buyer: Buyer, sellers: list[Seller]):
+    """Pick the slot with the closest fit to the buyer's job for repair.
+
+    Score by: matches buyer's GPU prefs (+10), qty within reach (+5 if
+    slot.qty >= ceil(buyer.qty * 0.5)), duration within reach (+3), reserve
+    cheap (+1 if cheapest 50%). Ties broken by cheapest reserve.
+    """
+    candidates = []
+    all_slots = [sl for s in sellers for sl in s.capacity_slots]
+    if not all_slots:
+        return None
+    median_reserve = sorted(sl.reserve_per_gpu_hr for sl in all_slots)[len(all_slots) // 2]
+    for sl in all_slots:
+        score = 0
+        if sl.gpu_type in buyer.job.acceptable_gpus:
+            score += 10
+        if sl.qty >= max(1, buyer.job.qty // 2):
+            score += 5
+        if sl.duration >= max(1, buyer.job.duration // 2):
+            score += 3
+        if sl.reserve_per_gpu_hr <= median_reserve:
+            score += 1
+        candidates.append((score, sl.reserve_per_gpu_hr, sl))
+    candidates.sort(key=lambda t: (-t[0], t[1]))
+    return candidates[0][2] if candidates else None
 
 
 __all__ = [

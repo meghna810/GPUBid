@@ -1,5 +1,54 @@
 # Changelog
 
+## v0.4.3 — 2026-04-27 (latest)
+
+The "deals actually close" fix.
+
+### Guaranteed buyer-seller satisfiability
+
+Even with the strict matchmaker, the v0.4.1 chat market frequently closed
+0 deals because most buyers had no structurally-compatible seller slot
+to begin with — random market generation produced incompatible buyer/slot
+pairs no amount of dialogue could resolve.
+
+Fixed by `_ensure_buyer_satisfiability` in `market_v3.py`. After buyers
+and sellers are generated, walk every buyer; if no slot satisfies them
+on (GPU, qty, duration, time window), find the closest candidate slot
+and **loosen the buyer's job** (lower qty, shorter duration, wider window,
+add the slot's GPU type to acceptable list) until at least one slot does.
+Buyer's `max_value_per_gpu_hr` and seller reserves stay untouched — only
+structural prefs get relaxed, so the only thing the LLM dialogue still
+has to negotiate is **price**.
+
+Result: 8/8 buyers have at least one fully-compatible slot in every
+seed tested (was 1/8 in worst cases). Every buyer also has positive
+bargaining zone — `max_value > cheapest_compat_reserve` always.
+
+### Close-biased dialogue prompts
+
+`_SELLER_DIALOGUE_PROMPT` and `_BUYER_DIALOGUE_PROMPT` both now lead with:
+
+> YOUR PRIMARY GOAL: CLOSE A DEAL.
+
+Walk-away is reframed as a last resort, not a negotiating move. Concession
+steps capped at 5-15% per turn so agents converge instead of holding firm.
+The per-turn user message includes a closing-pressure ⚠ banner in the
+last 2 turns.
+
+### Tighter openings + longer threads
+
+- Opening prices: seller `1.30 × reserve` (was 1.50), buyer `0.65 × max`
+  (was 0.55) — narrower starting gap.
+- `max_turns_per_dialogue` 6 → 8.
+- `max_retries_per_buyer` 2 → 3.
+
+### Bumped
+
+- `__version__` → `0.4.3`.
+- 163 tests passing, 2 skipped.
+
+---
+
 ## v0.4.1 — 2026-04-27 (late)
 
 The "agents actually negotiate" pass.
