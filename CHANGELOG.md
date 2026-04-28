@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.4.4 — 2026-04-27 (latest)
+
+The "Gemini sellers stop walking away on turn 1" fix.
+
+### Schema sanitizer now handles JSONSchema type unions
+
+The dialogue tool's `proposed_price_per_gpu_hr` parameter has type
+`["number", "null"]` (price required for `counter`, null for `accept` /
+`walk_away`). Gemini's tool schema validator rejects union types — `type`
+must be a single string. The sanitizer in `gpubid.llm._sanitize_for_gemini`
+didn't handle this, so every Gemini-backed seller agent crashed on turn 1
+with a Pydantic validation error and walked away as the fallback action.
+
+Fix: when `type` is a list, drop "null" from it, set the surviving type
+as the canonical one, and add `nullable: true` (Gemini's preferred way
+to express optional). Applied recursively through nested schemas.
+
+Two new regression tests in `test_llm.py` so this can't sneak back:
+- `test_gemini_sanitizer_rewrites_type_union_to_nullable`
+- `test_dialogue_tool_schema_is_gemini_compatible`
+
+### Stricter "no early walk-away" instructions
+
+Even agents that aren't crashing were sometimes walking away on turn 1.
+Both dialogue prompts now say explicitly: NEVER walk away on turns 1-3
+(seller) or turns 1, 2, 4 (buyer's early turns). The agent must counter.
+Walk-away is only available after turn 4-5 and only after at least 2
+concessions from your own side.
+
+### Bumped
+
+- `__version__` → `0.4.4`.
+- 165 tests passing, 2 skipped (added 2 new schema-sanitizer tests).
+
+---
+
 ## v0.4.3 — 2026-04-27 (latest)
 
 The "deals actually close" fix.

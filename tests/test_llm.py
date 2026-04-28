@@ -48,6 +48,39 @@ def test_gemini_key_detected():
     assert detect_provider("AIzaSyA1B2C3D4E5F6G7H8") == "gemini"
 
 
+def test_gemini_sanitizer_rewrites_type_union_to_nullable():
+    """Gemini's tool schema validator rejects JSONSchema `type: [...]` unions.
+    Our sanitizer must collapse them to a single type + `nullable: true`. This
+    is the bug that was making seller-side Gemini agents walk away on turn 1
+    in the bilateral dialogue (proposed_price_per_gpu_hr has type [number, null])."""
+    from gpubid.llm import _sanitize_for_gemini
+    schema = {
+        "type": "object",
+        "properties": {
+            "price": {"type": ["number", "null"], "description": "x"},
+            "name":  {"type": "string"},
+        },
+        "required": ["price"],
+    }
+    cleaned = _sanitize_for_gemini(schema)
+    assert cleaned["properties"]["price"]["type"] == "number"
+    assert cleaned["properties"]["price"]["nullable"] is True
+    # Non-list types pass through unchanged
+    assert cleaned["properties"]["name"]["type"] == "string"
+    assert "nullable" not in cleaned["properties"]["name"]
+
+
+def test_dialogue_tool_schema_is_gemini_compatible():
+    """End-to-end: the actual dialogue ToolSpec should sanitize cleanly so
+    Gemini sellers don't walk away on turn 1 with a schema validation error."""
+    from gpubid.llm import _sanitize_for_gemini
+    from gpubid.protocol.dialogue import _DIALOGUE_TOOL
+    cleaned = _sanitize_for_gemini(_DIALOGUE_TOOL.parameters)
+    price_field = cleaned["properties"]["proposed_price_per_gpu_hr"]
+    assert price_field["type"] == "number"
+    assert price_field["nullable"] is True
+
+
 def test_unknown_key_raises():
     with pytest.raises(ProviderUnknownError):
         detect_provider("garbage-key")
