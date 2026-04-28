@@ -269,9 +269,12 @@ def _synth_profile_from_requirement(
         requirement.workload_category, (GPUType.A100, GPUType.L40S)
     )
 
-    # Time window: wide enough that some seller slot will plausibly fit
-    earliest = int(rng.integers(0, 12))
-    latest = min(24, earliest + int(round(duration)) + int(rng.integers(4, 10)))
+    # Time window: wide enough that some seller slot will plausibly fit.
+    # See note in market.py about the chat-market mechanism's sensitivity to
+    # this — narrow windows cause structural mismatches that no amount of
+    # negotiation can fix.
+    earliest = int(rng.integers(0, 9))
+    latest = min(24, earliest + int(round(duration)) + int(rng.integers(10, 16)))
 
     # Most workloads in the demo prefer permissive tolerance so they don't
     # bounce off seller offers on a tolerance-mismatch alone. Real-time

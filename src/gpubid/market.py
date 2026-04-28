@@ -199,9 +199,14 @@ def _generate_buyers(
         duration = int(rng.integers(2, dur_max + 1))
 
         # Time window: wide enough that several slots can plausibly fit.
-        # Earliest in [0, 16], latest gives at least `duration` + 4 hours of slack.
-        earliest = int(rng.integers(0, 17))
-        latest_offset = int(rng.integers(4, 12))
+        # We bias buyer earliest_start toward the beginning of the day and use
+        # a generous latest_offset so the [earliest, latest] window almost
+        # always contains the seller's slot start hour. Without this, many
+        # structurally-fine buyer/slot pairs miss each other on time alone —
+        # the chat-market path is sensitive to this since matchmaking is the
+        # only thing pairing them up.
+        earliest = int(rng.integers(0, 9))      # 0..8
+        latest_offset = int(rng.integers(10, 17))  # 10..16 hours of slack after duration
         latest = min(24, earliest + duration + latest_offset)
 
         # Bias toward more-permissive tolerances so buyer/seller offers are
