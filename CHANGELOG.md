@@ -1,5 +1,73 @@
 # Changelog
 
+## v0.4.1 — 2026-04-27 (late)
+
+The "agents actually negotiate" pass.
+
+### Bilateral chat is now the primary market mechanism
+
+Notebook cell 3 ("Watch the agents negotiate") used to drive the public-board
+flow with a central clearing engine — agents posted offers to a shared board
+and a clearer matched compatible bids/asks. That isn't really "negotiating",
+it's bidding into an order book.
+
+Now the headline mechanism is `gpubid.protocol.chat_market.run_chat_market`:
+
+1. **Matchmaking** — for each buyer, list seller slots that are structurally
+   compatible (GPU type, time window, qty, duration, tolerance), ranked by
+   reserve cheapest-first.
+2. **Sequential bilateral dialogues** — buyers ordered by urgency descending.
+   Each buyer's LLM chats turn-by-turn with the seller's LLM (via the existing
+   `gpubid.protocol.dialogue.run_bilateral_dialogue`) until one accepts,
+   walks away, or hits the turn cap (default 6).
+3. **Walk-away → retry** — when a buyer walks, they try the next compatible
+   slot. Up to 2 retries per buyer.
+4. **No central clearer** — only sanity validation that the closing price is
+   inside both private reserves. Capacity scarcity (slot qty) is the only
+   "market dynamic."
+
+The board flow is preserved in `round_runner` for the deterministic / preset
+paths and as the comparison baseline; it just isn't the headline anymore.
+
+### Live streaming chat viz
+
+`gpubid.viz.chat_stream.render_chat_thread` renders one bilateral dialogue
+as an iMessage-style chat thread (buyer right, seller left, model badges on
+every bubble showing provider/model). Each turn shows the agent's argument,
+attached condition, action (`COUNTER @ $X.XX/hr` / `ACCEPT` / `WALK AWAY`),
+and a "refs alt" pill when the agent cited an alternative.
+
+The notebook cell streams threads as they complete via an `on_dialogue_complete`
+callback into an `ipywidgets.Output` — you watch each conversation appear,
+then move to the next pair.
+
+### Auto-detect available providers
+
+The negotiation cell now auto-detects whichever LLM keys are present
+(Anthropic / OpenAI / Gemini, in any combination) and round-robins them
+across buyers and sellers. If one provider is set, both sides use it; if
+multiple, each side gets a mix so threads are cross-provider by default.
+No hardcoded provider list — bring whichever keys you have.
+
+### Wider buyer time windows
+
+Bilateral matchmaking is sensitive to time-window overlap in a way the
+board flow wasn't (the board could just have buyers hop to whichever ask
+matched). Buyer `earliest_start` now in [0, 8] (was [0, 16]) and
+`latest_offset` in [10, 16] hours after duration (was [4, 12]). Result:
+6-8 of 8 buyers now have at least one structurally-compatible slot, up
+from often 4-5.
+
+### Plumbing
+
+- `chat_run_to_snapshots` adapter: emits `RoundSnapshot`-shaped records
+  from a `ChatMarketRun` so the existing forensics, persuasion, and chat-
+  exchange views keep working unmodified.
+- `__version__` → `0.4.1`.
+- 163 tests passing, 2 skipped.
+
+---
+
 ## v0.4.0 — 2026-04-27 (evening)
 
 The "deals reliably close + Gemini + persuasion analytics" pass.
