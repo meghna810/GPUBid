@@ -266,41 +266,57 @@ def head_to_head_multi(
     models.
     """
     if intra_provider_mode:
-        if len(api_keys) != 1:
+        # Pool every (provider, model) tuple across all providers in api_keys
+        # into one entrant list. Backward-compatible: a single-provider-with-
+        # list-of-models call still works; a multi-provider-with-lists call
+        # now produces the "cross-tier" tournament (e.g. Haiku vs Sonnet vs
+        # Opus vs 4o-mini vs 4o all in one round-robin).
+        if not provider_models:
             raise ValueError(
-                f"intra_provider_mode needs exactly 1 provider key; got {sorted(api_keys.keys())}"
-            )
-        provider = next(iter(api_keys))
-        if not provider_models or provider not in provider_models:
-            raise ValueError(
-                "intra_provider_mode needs provider_models={provider: [model_a, model_b, ...]}"
-            )
-        models = provider_models[provider]
-        if not isinstance(models, (list, tuple)) or len(models) < 2:
-            raise ValueError(
-                f"intra_provider_mode needs >=2 models; got {models!r}"
+                "intra_provider_mode needs provider_models={provider: [model, ...]}"
             )
 
-        # Sanity-construct each (provider, model) so bad combos fail fast.
-        for m in models:
+        entrants: list[tuple[str, str]] = []
+        for prov, models in provider_models.items():
+            if prov not in api_keys:
+                raise ValueError(
+                    f"provider_models has {prov!r} but no api_keys[{prov!r}]"
+                )
+            if not isinstance(models, (list, tuple)):
+                raise ValueError(
+                    f"intra_provider_mode needs provider_models[{prov!r}] = list of models; "
+                    f"got {type(models).__name__}"
+                )
+            for m in models:
+                entrants.append((prov, m))
+
+        if len(entrants) < 2:
+            raise ValueError(
+                f"intra_provider_mode needs >=2 (provider, model) entrants total; got {entrants}"
+            )
+
+        # Sanity-construct each (provider, model) once so bad combos fail fast.
+        for prov, m in entrants:
             try:
-                make_client(api_keys[provider], model=m)
+                make_client(api_keys[prov], model=m)
             except Exception as e:
                 raise ValueError(
-                    f"Could not construct {provider}/{m} client: {e}"
+                    f"Could not construct {prov}/{m} client: {e}"
                 )
 
-        # Each "entrant" in the round-robin is a (provider, model) tuple,
-        # rendered as "anthropic/claude-haiku-4-5" in the report.
-        entrant_labels = [f"{provider}/{m}" for m in models]
+        # Each entrant labeled "anthropic/claude-haiku-4-5", "openai/gpt-4o-mini", etc.
+        entrant_labels = [f"{prov}/{m}" for prov, m in entrants]
+        providers_used = sorted({p for p, _ in entrants})
 
         result = TournamentResult(
-            name=f"intra-{provider}",
+            name=("intra-" + providers_used[0]) if len(providers_used) == 1
+                 else "cross-tier-" + "-".join(providers_used),
             description=(
                 f"{n_seeds} seeds × {n_buyers}b×{n_sellers}s {regime}; "
-                f"round-robin within {provider}: {', '.join(models)}"
+                f"round-robin across {len(entrants)} (provider, model) entrants: "
+                f"{', '.join(entrant_labels)}"
             ),
-            provider_models={lbl: m for lbl, m in zip(entrant_labels, models)},
+            provider_models={lbl: m for lbl, (_, m) in zip(entrant_labels, entrants)},
         )
 
         for i, seed in enumerate(range(n_seeds)):
@@ -320,8 +336,8 @@ def head_to_head_multi(
 
             # One client per (provider, model) entrant.
             clients = {
-                lbl: make_client(api_keys[provider], model=m)
-                for lbl, m in zip(entrant_labels, models)
+                lbl: make_client(api_keys[prov], model=m)
+                for lbl, (prov, m) in zip(entrant_labels, entrants)
             }
             buyers = {
                 b.id: LLMBuyer(buyer_id=b.id, client=clients[buyer_assignment[b.id]])

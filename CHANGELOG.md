@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.5.1 — 2026-04-28 (later)
+
+The "cross-tier tournament actually uses both providers" fix.
+
+### Bug
+
+The model-version tournament cell (6.77) was picking the *first* provider with a key and running models within that one provider in isolation. With both Anthropic and OpenAI keys set, only Anthropic ran — the user wanted a head-to-head across all available cost tiers from both providers.
+
+Plus the Anthropic model list was missing Opus — only Haiku and Sonnet appeared.
+
+### Fix
+
+`head_to_head_multi(intra_provider_mode=True)` now pools every `(provider, model)` tuple from `provider_models` into one entrant list, regardless of how many providers contribute models. Backward compatible:
+
+- Single-provider, multi-model (the old shape): still works — `{'anthropic': ['haiku', 'sonnet']}`.
+- Multi-provider, multi-model (the new shape): `{'anthropic': ['haiku', 'sonnet', 'opus'], 'openai': ['4o-mini', '4o']}` — all 5 entrants pooled, round-robined across buyers and sellers.
+
+Result name reflects the shape: `intra-anthropic` for single-provider, `cross-tier-anthropic-openai` for multi.
+
+### Notebook cell 6.77 updates
+
+- Renamed: "Cross-tier tournament — Claude Haiku/Sonnet/Opus vs OpenAI 4o-mini/4o".
+- Default `INTRA_PROVIDER_MODELS` now includes Opus on the Anthropic side.
+- Cell auto-detects which provider keys are set and includes both in the same tournament when available.
+- Default `INTRA_N_SEEDS = 3` (was implicitly 5) since adding Opus + 4o makes runs costlier.
+- Markdown documents cost: ~$2-6 per run with default 3 seeds, $5-15 with 5 seeds. Drop Opus to manage cost.
+
+### Bumped
+
+- `__version__` → `0.5.1`.
+- 165 tests passing.
+
+---
+
 ## v0.5.0 — 2026-04-28
 
 The "demo focus + explain how it works" pass.
