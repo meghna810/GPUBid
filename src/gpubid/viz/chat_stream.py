@@ -173,7 +173,68 @@ def _escape(s: str) -> str:
             .replace('"', "&quot;").replace("\n", "<br>"))
 
 
+def render_seller_menu(buyer, candidate_slots, sellers) -> str:
+    """Render the "shop window" of seller-slot options the buyer is choosing from.
+
+    The first slot in `candidate_slots` is the buyer's first pick (cheapest by
+    reserve); the rest are fall-back options if their first chat walks away.
+
+    Highlights this thread's "winner" choice (slot 0) with a green pill so the
+    audience can see exactly what the buyer is engaging with first.
+    """
+    seller_lookup = {sl.id: s for s in sellers for sl in s.capacity_slots}
+
+    rows = []
+    for i, sl in enumerate(candidate_slots[:6]):  # cap at 6 to keep view tidy
+        seller = seller_lookup.get(sl.id)
+        seller_label = seller.label if seller else "?"
+        is_first = (i == 0)
+        bg = "#dcfce7" if is_first else "#fff"
+        border = "#16a34a" if is_first else "#e5e7eb"
+        badge = (
+            '<span style="background:#16a34a;color:#fff;padding:1px 7px;border-radius:8px;'
+            'font-size:9px;font-weight:600;margin-left:6px;">first pick</span>'
+        ) if is_first else ""
+        rows.append(
+            f'<div style="background:{bg};border:1px solid {border};border-radius:6px;'
+            f'padding:8px 12px;margin-bottom:4px;font-size:12px;">'
+            f'<div style="display:flex;justify-content:space-between;align-items:baseline;">'
+            f'<strong style="color:#111;">#{i+1} · {seller_label} · slot {sl.id}{badge}</strong>'
+            f'<span style="font-family:monospace;color:#374151;">'
+            f'{sl.gpu_type.value}×{sl.qty} · hr{sl.start:02d}+{sl.duration}h · '
+            f'reserve ${sl.reserve_per_gpu_hr:.2f}/hr'
+            f'</span>'
+            f'</div>'
+            f'</div>'
+        )
+
+    n_more = max(0, len(candidate_slots) - 6)
+    more_html = (
+        f'<div style="font-size:10px;color:#9ca3af;margin-top:4px;">'
+        f'…+{n_more} more compatible options not shown</div>'
+        if n_more > 0 else ''
+    )
+
+    return (
+        f'<div style="font-family:{FONT_STACK};max-width:780px;'
+        f'border:1px dashed #6366f1;border-radius:8px;padding:10px 14px;'
+        f'background:#eef2ff;margin-bottom:8px;">'
+        f'<div style="font-size:12px;font-weight:600;color:#4338ca;margin-bottom:6px;">'
+        f'🛍 {buyer.id} ({buyer.label}) is choosing from {len(candidate_slots)} compatible seller slot(s)'
+        f'</div>'
+        f'<div style="font-size:11px;color:#6b7280;margin-bottom:8px;line-height:1.4;">'
+        f'Buyer needs {buyer.job.qty}× {",".join(g.value for g in buyer.job.acceptable_gpus)} '
+        f'for {buyer.job.duration}h between hr {buyer.job.earliest_start}-{buyer.job.latest_finish}. '
+        f'They engage the cheapest slot first (green); on walk-away they try the next.'
+        f'</div>'
+        f'{"".join(rows)}'
+        f'{more_html}'
+        f'</div>'
+    )
+
+
 __all__ = [
     "render_chat_thread",
     "render_chat_market_summary",
+    "render_seller_menu",
 ]

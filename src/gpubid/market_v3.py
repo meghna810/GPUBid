@@ -289,12 +289,26 @@ def _synth_profile_from_requirement(
     urgency_to_score = {"routine": 0.2, "soon": 0.5, "urgent": 0.85}
     urgency_score = urgency_to_score[requirement.expected_urgency_band] + 0.1 * float(rng.random())
 
-    # Max WTP scales with the most expensive acceptable GPU. Pick a markup
-    # band that clearly exceeds the seller opening markup (1.5x in tight,
-    # 1.2x in slack) so the bargaining zone is positive — otherwise even a
-    # well-behaved LLM run can fail to close any deals.
+    # Max WTP scales with the most expensive acceptable GPU. We stratify
+    # buyers across three negotiation difficulty bands so the demo has a
+    # mix of dramatic outcomes:
+    #   - "easy"   (40% of buyers): markup 1.95-2.35x reserve. Plenty of
+    #              bargaining zone, deals close fast at moderate prices.
+    #   - "medium" (40%): markup 1.55-1.85x. Closer to the seller's opening
+    #              markup of 1.30-1.50x; LLMs have to actually argue.
+    #   - "tight"  (20%): markup 1.30-1.50x. Bargaining zone is narrow;
+    #              this is where you see real haggling, occasional walk-aways,
+    #              and cross-provider style differences matter most.
+    # The breakdown ratio + bands are tuned so the chat cell typically closes
+    # 70-90% of buyers but every run has 1-2 dramatic threads.
     most_expensive_reserve = max(GPU_BASE_RESERVE[g] for g in acceptable)
-    markup = 1.75 + 0.65 * float(rng.random())  # 1.75x..2.4x
+    band_roll = float(rng.random())
+    if band_roll < 0.40:
+        markup = 1.95 + 0.40 * float(rng.random())   # 1.95x..2.35x — easy
+    elif band_roll < 0.80:
+        markup = 1.55 + 0.30 * float(rng.random())   # 1.55x..1.85x — medium
+    else:
+        markup = 1.30 + 0.20 * float(rng.random())   # 1.30x..1.50x — tight
     max_wtp = round(most_expensive_reserve * markup, 2)
 
     public = BuyerPublicProfile(

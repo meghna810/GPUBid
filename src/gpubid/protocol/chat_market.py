@@ -126,6 +126,7 @@ def run_chat_market(
     seller_volume_policies: Optional[dict[str, object]] = None,
     buyer_business_contexts: Optional[dict[str, str]] = None,
     on_dialogue_complete: Optional[callable] = None,
+    on_buyer_choosing: Optional[callable] = None,
 ) -> ChatMarketRun:
     """Run a chat-based market. Each deal is the product of a real bilateral chat.
 
@@ -136,9 +137,13 @@ def run_chat_market(
     `buyer_clients` / `seller_clients` map agent_id → LLMClient. Pass any
     LLMClient subclass — Anthropic, OpenAI, Gemini all work the same.
 
-    `on_dialogue_complete` is an optional callback `fn(dialogue_result, deal)`
-    called after each thread closes — used by the streaming chat viz to render
-    each conversation as it happens.
+    Callbacks (both optional):
+      * `on_buyer_choosing(buyer, candidate_slots)` — fires BEFORE this buyer's
+        first chat. Used by the notebook viz to render the "shop window" of
+        compatible slots the buyer is choosing from. The buyer-agent picks the
+        cheapest first; the rest are fall-back options if that chat walks away.
+      * `on_dialogue_complete(dialogue, deal_or_None)` — fires after each chat
+        thread ends.
     """
     # State
     slot_remaining: dict[str, int] = {
@@ -166,6 +171,16 @@ def run_chat_market(
         if not compatible:
             skipped.append((buyer.id, "no compatible slot with remaining capacity"))
             continue
+
+        # Render the buyer's "shop window" — the menu of seller-slot options
+        # they could pick. The chosen-first slot is at index 0 (cheapest);
+        # the rest are fall-back options the buyer tries if the first chat
+        # walks away.
+        if on_buyer_choosing is not None:
+            try:
+                on_buyer_choosing(buyer, compatible)
+            except Exception:
+                pass  # never let viz callbacks break the run
 
         retries_left = max_retries_per_buyer
         for slot in compatible:
