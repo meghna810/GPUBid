@@ -18,11 +18,13 @@ dependencies = [
     "ipywidgets>=8.1",
     "anthropic>=0.40",
     "openai>=1.50",
-    "google-genai>=0.3",
     "tenacity>=8.2",
 ]
 
 [project.optional-dependencies]
+gemini = [
+    "google-genai>=0.3",   # only needed if you want to run with Gemini keys
+]
 dev = [
     "pytest>=7.4",
     "pytest-asyncio>=0.23",

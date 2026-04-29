@@ -1,5 +1,98 @@
 # Changelog
 
+## v0.5.0 — 2026-04-28
+
+The "demo focus + explain how it works" pass.
+
+### Anthropic + OpenAI demo focus (Gemini optional)
+
+Demo path now defaults to **Anthropic + OpenAI only**. Gemini is still
+supported in `gpubid.llm` for anyone with a key, but moved out of the
+notebook defaults and pyproject.toml core dependency. To enable: install
+`gpubid[gemini]` and set `GEMINI_API_KEY` + `PROVIDERS = ['anthropic',
+'openai', 'gemini']` in cell 27.
+
+Cells updated: setup pip install, cell 4 (API key loader), cell 27
+(provider tournament), cell 33 (model-version tournament), cell 32 markdown.
+
+### Buyer translation explainer (cells 14-15)
+
+New section "How the buyer agent translates a CEO brief into a GPU contract"
+documents the LLM tool-call mechanism, the public/private profile schema,
+and a cue table showing which language patterns produce which structured
+fields. Followed by a side-by-side render: each buyer's raw CEO brief
+beside the structured contract the agent extracted.
+
+### Seller-menu "shop window" before each chat
+
+`run_chat_market` gains an `on_buyer_choosing(buyer, candidates)` callback
+that fires before each buyer's first dialogue. The notebook chat-market
+cell hooks this to render the menu of compatible seller slots the buyer
+is choosing from — first pick (cheapest reserve) highlighted in green,
+fall-back options listed below. Makes it visible that the buyer agent
+faces a *menu* of options and has to pick one to negotiate with.
+
+`gpubid.viz.chat_stream.render_seller_menu` is the new renderer.
+
+### Stratified buyer max-WTP for varied conflict (40/40/20 mix)
+
+`market_v3._synth_profile_from_requirement` now stratifies buyers across
+three difficulty bands:
+- 40% **easy**   (markup 1.95-2.35x reserve) — comfortable bargaining zone
+- 40% **medium** (markup 1.55-1.85x) — close to seller opening
+- 20% **tight**  (markup 1.30-1.50x) — narrow zone, dramatic haggling
+
+Result: every demo run has a mix — some threads close fast, some struggle,
+some occasionally walk away. Cross-provider style differences become more
+visible in the tight-band threads.
+
+### Persuasion methodology explainer (cell 6.75)
+
+Replaced the introductory markdown with a methodology cell that:
+- Defines quantitative persuasion (counterparty price movement after this
+  agent's bubble — revealed-behavior measure, no LLM judgment).
+- Defines the 7 semantic tags (`bluff`, `false_urgency`, `emotional_appeal`,
+  `anchor`, `concession`, `honest_argument`, `hedge`).
+- Explains cross-provider judging (avoids self-favoring bias).
+- States limitations (small N, judge-model bias, exploratory not benchmark).
+
+### Prompt-variant experiment (cell 6.78)
+
+New module `gpubid.protocol.prompt_variants` runs the same market under
+four prompt strategies on the same model, fixed seed:
+- `standard` — current production prompt (close-biased).
+- `aggressive` — anchor hard, concede 3-5% per turn, walk away earlier.
+- `cooperative` — concede 10-20% per turn, accept eagerly.
+- `few_shot` — standard prompt + 2 worked examples of past closed deals.
+
+`run_prompt_variant_tournament` patches the dialogue prompts in/out cleanly
+(restores after each variant runs). Output: per-variant close rate, avg
+turns, avg closing price as % of buyer max, avg surplus to each side.
+
+The user can now answer: "does prompt engineering matter as much as
+model choice?" empirically.
+
+### Why-agentic + design-decisions framing (cell 7.5)
+
+New cell before the writeup explains:
+- **Why agent-to-agent over auctions** — volume discounts make offers
+  non-comparable, fuzzy NL inputs need translation, conditional concessions
+  don't exist in sealed bids, asymmetric private info is preserved.
+- **Why GPU compute** — perishable inventory, heterogeneous demand, tiered
+  pricing already exists, multi-buyer simultaneity.
+- **Generalizes to** — cloud beyond GPUs, energy markets, logistics, ad
+  inventory, healthcare procurement, enterprise software licensing.
+- **Top three platform-design decisions** — bilateral chat over sealed
+  bid, NL briefs + LLM translation, cross-provider judge for analytics.
+
+### Bumped
+
+- `__version__` → `0.5.0`.
+- `pyproject.toml`: `google-genai` moved from core deps to `[gemini]` extra.
+- 165 tests passing, 2 skipped.
+
+---
+
 ## v0.4.5 — 2026-04-27 (latest)
 
 The "demo plan" pass — restructure the notebook for a 4-minute walkthrough.

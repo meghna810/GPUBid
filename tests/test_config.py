@@ -79,6 +79,6 @@ def test_missing_api_key_message_is_actionable():
         raise MissingAPIKeyError("ANTHROPIC_API_KEY not set; v0.3 requires real LLM access")
 
 
-def test_version_is_v04_series():
+def test_version_is_v05_series():
     import gpubid
-    assert gpubid.__version__.startswith("0.4.")
+    assert gpubid.__version__.startswith("0.5.")
